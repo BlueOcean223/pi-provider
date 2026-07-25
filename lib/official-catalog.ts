@@ -1,6 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { execFileSync } from "node:child_process";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelEntry, ProviderApi } from "./types.ts";
 
 /** Subset of pi official model fields we copy onto relay models. */
@@ -49,163 +47,58 @@ const LOW_PRIORITY_PROVIDERS = new Set([
 	"google-vertex",
 ]);
 
-let cachedCatalog: OfficialModelMeta[] | null = null;
-let cachedSource: string | null = null;
-
 function normalizeId(id: string): string {
 	return id.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
-/** Resolve directory of pi-ai shipped model JSON (tracks installed pi version). */
-export function resolvePiAiDataDir(): string | null {
-	const candidates: string[] = [];
-
-	try {
-		const piBin = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
-		if (piBin) {
-			const binDir = dirname(piBin);
-			candidates.push(
-				join(
-					binDir,
-					"../lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/providers/data",
-				),
-				join(
-					binDir,
-					"../lib/node_modules/@mariozechner/pi-coding-agent/node_modules/@mariozechner/pi-ai/dist/providers/data",
-				),
-				join(
-					binDir,
-					"../lib/node_modules/@earendil-works/pi-ai/dist/providers/data",
-				),
-			);
-		}
-	} catch {
-		// ignore
+/**
+ * Snapshot pi's live model catalog as the enrichment source.
+ *
+ * ctx.modelRegistry.getAll() returns the composed catalog: bundled pi-ai
+ * providers (remote-refreshed unless PI_OFFLINE) plus models.json and
+ * extension-registered providers. Works in every install mode (npm, pi-node,
+ * bun binary) — no filesystem guessing needed.
+ *
+ * Pass provider ids via excludeProviders to skip relay providers already
+ * defined in models.json, so previously-added relay copies don't match
+ * against themselves.
+ */
+export function catalogFromRegistry(
+	ctx: ExtensionContext,
+	excludeProviders: Iterable<string> = [],
+): OfficialModelMeta[] {
+	const skip = new Set(excludeProviders);
+	const out: OfficialModelMeta[] = [];
+	for (const m of ctx.modelRegistry.getAll()) {
+		const obj = m as unknown as Record<string, unknown>;
+		const id = typeof obj.id === "string" ? obj.id : undefined;
+		const provider = typeof obj.provider === "string" ? obj.provider : undefined;
+		if (!id || !provider || skip.has(provider)) continue;
+		out.push({
+			id,
+			provider,
+			name: typeof obj.name === "string" ? obj.name : undefined,
+			api: typeof obj.api === "string" ? obj.api : undefined,
+			reasoning: typeof obj.reasoning === "boolean" ? obj.reasoning : undefined,
+			input: Array.isArray(obj.input) ? (obj.input as Array<"text" | "image">) : undefined,
+			cost:
+				obj.cost && typeof obj.cost === "object"
+					? (obj.cost as OfficialModelMeta["cost"])
+					: undefined,
+			contextWindow:
+				typeof obj.contextWindow === "number" ? obj.contextWindow : undefined,
+			maxTokens: typeof obj.maxTokens === "number" ? obj.maxTokens : undefined,
+			thinkingLevelMap:
+				obj.thinkingLevelMap && typeof obj.thinkingLevelMap === "object"
+					? (obj.thinkingLevelMap as OfficialModelMeta["thinkingLevelMap"])
+					: undefined,
+			compat:
+				obj.compat && typeof obj.compat === "object"
+					? (obj.compat as Record<string, unknown>)
+					: undefined,
+		});
 	}
-
-	// common local installs
-	const home = process.env.HOME ?? "";
-	if (home) {
-		candidates.push(
-			join(
-				home,
-				".local/share/pi-node/node-v22.23.1-darwin-arm64/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/providers/data",
-			),
-		);
-		// glob-ish: try reading pi-node without hardcoding node version
-		try {
-			const piNode = join(home, ".local/share/pi-node");
-			if (existsSync(piNode)) {
-				for (const ent of readdirSync(piNode)) {
-					if (!ent.startsWith("node-")) continue;
-					candidates.push(
-						join(
-							piNode,
-							ent,
-							"lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/providers/data",
-						),
-					);
-				}
-			}
-		} catch {
-			// ignore
-		}
-	}
-
-	for (const c of candidates) {
-		if (existsSync(c)) return c;
-	}
-	return null;
-}
-
-function walkCatalogJson(data: unknown, out: OfficialModelMeta[]): void {
-	if (!data || typeof data !== "object") return;
-
-	// Shape A: { "api-name": { "model-id": { id, ... } } }
-	// Shape B: flat { "model-id": { id, ... } }
-	for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
-		if (!value || typeof value !== "object") continue;
-		const obj = value as Record<string, unknown>;
-
-		// model leaf: has contextWindow or cost or reasoning+id
-		const looksLikeModel =
-			typeof obj.id === "string" ||
-			typeof obj.contextWindow === "number" ||
-			(obj.cost && typeof obj.cost === "object");
-
-		const nestedIsModels =
-			!looksLikeModel &&
-			Object.values(obj).some(
-				(v) =>
-					v &&
-					typeof v === "object" &&
-					(typeof (v as { id?: unknown }).id === "string" ||
-						typeof (v as { contextWindow?: unknown }).contextWindow === "number"),
-			);
-
-		if (nestedIsModels) {
-			walkCatalogJson(obj, out);
-			continue;
-		}
-
-		if (looksLikeModel) {
-			const id = typeof obj.id === "string" ? obj.id : key;
-			out.push({
-				id,
-				provider: typeof obj.provider === "string" ? obj.provider : "unknown",
-				name: typeof obj.name === "string" ? obj.name : undefined,
-				api: typeof obj.api === "string" ? obj.api : undefined,
-				reasoning: typeof obj.reasoning === "boolean" ? obj.reasoning : undefined,
-				input: Array.isArray(obj.input) ? (obj.input as Array<"text" | "image">) : undefined,
-				cost:
-					obj.cost && typeof obj.cost === "object"
-						? (obj.cost as OfficialModelMeta["cost"])
-						: undefined,
-				contextWindow:
-					typeof obj.contextWindow === "number" ? obj.contextWindow : undefined,
-				maxTokens: typeof obj.maxTokens === "number" ? obj.maxTokens : undefined,
-				thinkingLevelMap:
-					obj.thinkingLevelMap && typeof obj.thinkingLevelMap === "object"
-						? (obj.thinkingLevelMap as OfficialModelMeta["thinkingLevelMap"])
-						: undefined,
-				compat:
-					obj.compat && typeof obj.compat === "object"
-						? (obj.compat as Record<string, unknown>)
-						: undefined,
-			});
-		}
-	}
-}
-
-export function loadOfficialCatalog(): {
-	models: OfficialModelMeta[];
-	source: string | null;
-} {
-	if (cachedCatalog) {
-		return { models: cachedCatalog, source: cachedSource };
-	}
-
-	const dir = resolvePiAiDataDir();
-	if (!dir) {
-		cachedCatalog = [];
-		cachedSource = null;
-		return { models: [], source: null };
-	}
-
-	const models: OfficialModelMeta[] = [];
-	for (const file of readdirSync(dir)) {
-		if (!file.endsWith(".json")) continue;
-		try {
-			const raw = JSON.parse(readFileSync(join(dir, file), "utf8"));
-			walkCatalogJson(raw, models);
-		} catch {
-			// skip bad file
-		}
-	}
-
-	cachedCatalog = models;
-	cachedSource = dir;
-	return { models, source: dir };
+	return out;
 }
 
 /** Hint which first-party provider a model id belongs to. */
@@ -308,11 +201,11 @@ function scoreMatch(
  * Relays usually mirror official model names/ids.
  */
 export function matchOfficialModel(
+	catalog: OfficialModelMeta[],
 	relayId: string,
 	preferredApi?: ProviderApi,
 ): OfficialModelMeta | undefined {
-	const { models } = loadOfficialCatalog();
-	if (models.length === 0) return undefined;
+	if (catalog.length === 0) return undefined;
 
 	const r = normalizeId(relayId);
 	const relayTail = normalizeId(relayId.split(/[/:]/).pop() ?? relayId);
@@ -320,7 +213,7 @@ export function matchOfficialModel(
 	let best: OfficialModelMeta | undefined;
 	let bestScore = 0;
 
-	for (const m of models) {
+	for (const m of catalog) {
 		const o = normalizeId(m.id);
 		const officialTail = normalizeId(m.id.split(/[/:]/).pop() ?? m.id);
 		const idScore = Math.max(
@@ -354,11 +247,12 @@ const DEFAULT_META = {
  * Build models.json entry: keep relay id, fill metadata from official catalog when possible.
  */
 export function enrichModelEntry(
+	catalog: OfficialModelMeta[],
 	relayId: string,
 	preferredApi?: ProviderApi,
 	relayName?: string,
 ): EnrichResult {
-	const official = matchOfficialModel(relayId, preferredApi);
+	const official = matchOfficialModel(catalog, relayId, preferredApi);
 
 	if (!official) {
 		return {

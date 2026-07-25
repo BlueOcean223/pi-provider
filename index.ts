@@ -18,6 +18,7 @@ import { listOpenAIModels, probeEndpoint } from "./lib/detect-api.ts";
 import {
 	getModelsPath,
 	listProviderIds,
+	modelsFileHasJsonc,
 	readModelsFile,
 	removeProvider,
 	sanitizeProviderId,
@@ -26,9 +27,10 @@ import {
 	writeModelsFile,
 } from "./lib/models-json.ts";
 import {
+	catalogFromRegistry,
 	enrichModelEntry,
 	formatCtx,
-	loadOfficialCatalog,
+	type OfficialModelMeta,
 } from "./lib/official-catalog.ts";
 import {
 	API_LABELS,
@@ -103,24 +105,21 @@ function resolveProbeKey(apiKey?: string): string | undefined {
 
 /** Enrich selected relay model ids with official pi catalog metadata. */
 function buildEnrichedModels(
+	catalog: OfficialModelMeta[],
 	ids: Array<{ id: string; name?: string }>,
 	api: ProviderApi,
 	ui: Ui,
 ): ModelEntry[] {
-	const { models: catalog, source } = loadOfficialCatalog();
 	if (catalog.length === 0) {
-		ui.notify(
-			"Official pi model catalog not found — using defaults (128k). Check pi install path.",
-			"warning",
-		);
+		ui.notify("pi model catalog unavailable — using defaults (128k)", "warning");
 	} else {
-		ui.notify(`Using official catalog (${catalog.length} models${source ? "" : ""})`, "info");
+		ui.notify(`Using pi model catalog (${catalog.length} models)`, "info");
 	}
 
 	let matched = 0;
 	const entries: ModelEntry[] = [];
 	for (const m of ids) {
-		const r = enrichModelEntry(m.id, api, m.name);
+		const r = enrichModelEntry(catalog, m.id, api, m.name);
 		if (r.status === "matched") matched++;
 		entries.push(r.entry);
 	}
@@ -133,13 +132,15 @@ function buildEnrichedModels(
 }
 
 async function pickModelsFromList(
-	ui: Ui,
+	ctx: ExtensionCommandContext,
+	catalog: OfficialModelMeta[],
 	listed: Array<{ id: string; name?: string }>,
 	api: ProviderApi,
 ): Promise<ModelEntry[] | null> {
+	const { ui } = ctx;
 	// Pre-enrich for display descriptions (ctx / thinking / match)
 	const checkboxItems = listed.map((m) => {
-		const r = enrichModelEntry(m.id, api, m.name);
+		const r = enrichModelEntry(catalog, m.id, api, m.name);
 		const e = r.entry;
 		const ctx = formatCtx(e.contextWindow);
 		const think = e.thinkingLevelMap
@@ -157,7 +158,7 @@ async function pickModelsFromList(
 	});
 
 	const selectedIds = await checkboxSelect(
-		ui,
+		ctx,
 		`Select models to add (${listed.length} from relay)`,
 		checkboxItems,
 	);
@@ -171,17 +172,19 @@ async function pickModelsFromList(
 		const found = listed.find((m) => m.id === id);
 		return { id, name: found?.name };
 	});
-	return buildEnrichedModels(selected, api, ui);
+	return buildEnrichedModels(catalog, selected, api, ui);
 }
 
 async function collectModels(
-	ui: Ui,
+	ctx: ExtensionCommandContext,
+	catalog: OfficialModelMeta[],
 	opts: {
 		api: ProviderApi;
 		baseUrl: string;
 		apiKey?: string;
 	},
 ): Promise<ModelEntry[] | null> {
+	const { ui } = ctx;
 	// Relay model catalogs are almost always OpenAI-style GET .../v1/models,
 	// independent of chat protocol (completions / anthropic / responses / google).
 	const choices = [
@@ -215,6 +218,7 @@ async function collectModels(
 				return null;
 			}
 			return buildEnrichedModels(
+				catalog,
 				ids.map((id) => ({ id })),
 				opts.api,
 				ui,
@@ -225,11 +229,11 @@ async function collectModels(
 			`Fetched ${listed.models.length} models${listed.matchedUrl ? ` from ${listed.matchedUrl}` : ""}`,
 			"info",
 		);
-		return pickModelsFromList(ui, listed.models, opts.api);
+		return pickModelsFromList(ctx, catalog, listed.models, opts.api);
 	}
 
 	if (mode.startsWith("Minimal")) {
-		return buildEnrichedModels([{ id: "default-model" }], opts.api, ui);
+		return buildEnrichedModels(catalog, [{ id: "default-model" }], opts.api, ui);
 	}
 
 	const raw = await ui.editor(
@@ -246,12 +250,14 @@ async function collectModels(
 	// If many ids, still offer multi-select after enrich preview
 	if (ids.length > 1) {
 		return pickModelsFromList(
-			ui,
+			ctx,
+			catalog,
 			ids.map((id) => ({ id })),
 			opts.api,
 		);
 	}
 	return buildEnrichedModels(
+		catalog,
 		ids.map((id) => ({ id })),
 		opts.api,
 		ui,
@@ -312,7 +318,15 @@ async function cmdAdd(ctx: ExtensionCommandContext): Promise<void> {
 	const apiKeyResult = await pickApiKey(ui);
 	if (apiKeyResult === null) return;
 
-	const models = await collectModels(ui, {
+	// Exclude relay providers already defined in models.json so their copied
+	// metadata can't match against itself; baseUrl-only proxy overrides keep
+	// the official builtin models and stay in the catalog.
+	const relayProviderIds = Object.entries(data.providers ?? {})
+		.filter(([, cfg]) => cfg.models?.length)
+		.map(([pid]) => pid);
+	const catalog = catalogFromRegistry(ctx, relayProviderIds);
+
+	const models = await collectModels(ctx, catalog, {
 		api,
 		baseUrl,
 		apiKey: apiKeyResult,
@@ -336,9 +350,12 @@ async function cmdAdd(ctx: ExtensionCommandContext): Promise<void> {
 	};
 
 	const preview = JSON.stringify({ [id]: config }, null, 2);
+	const jsoncNote = modelsFileHasJsonc()
+		? "\n\nNote: // comments and trailing commas in models.json will be removed on save."
+		: "";
 	const ok = await ui.confirm(
 		"Write models.json?",
-		`Will upsert provider "${id}" into ${getModelsPath()}\n\n${preview.slice(0, 1200)}${
+		`Will upsert provider "${id}" into ${getModelsPath()}${jsoncNote}\n\n${preview.slice(0, 1200)}${
 			preview.length > 1200 ? "\n…" : ""
 		}`,
 	);
@@ -364,6 +381,10 @@ async function cmdProxy(ctx: ExtensionCommandContext): Promise<void> {
 		const typed = await ui.input("Provider id", "anthropic");
 		if (!typed) return;
 		id = sanitizeProviderId(typed);
+		if (!id) {
+			ui.notify("Invalid provider id", "error");
+			return;
+		}
 	}
 
 	const baseUrlRaw = await ui.input(
@@ -408,7 +429,11 @@ async function cmdProxy(ctx: ExtensionCommandContext): Promise<void> {
 
 	const ok = await ui.confirm(
 		"Write models.json?",
-		`Route ${id} → ${baseUrl}\n(File: ${getModelsPath()})`,
+		`Route ${id} → ${baseUrl}\n(File: ${getModelsPath()})${
+			modelsFileHasJsonc()
+				? "\n\nNote: // comments and trailing commas in models.json will be removed on save."
+				: ""
+		}`,
 	);
 	if (!ok) return;
 
@@ -482,6 +507,8 @@ async function cmdTest(ctx: ExtensionCommandContext): Promise<void> {
 	const probeKey = resolveProbeKey(cfg.apiKey);
 	if (cfg.apiKey?.startsWith("$") && !probeKey) {
 		ui.notify(`Env ${cfg.apiKey.slice(1)} not set; probing without key`, "warning");
+	} else if (cfg.apiKey?.startsWith("!")) {
+		ui.notify("apiKey is a !command (not run here); probing without key", "warning");
 	}
 
 	ui.notify(`Probing ${cfg.baseUrl}…`, "info");
@@ -507,7 +534,8 @@ async function cmdShowPath(ctx: ExtensionCommandContext): Promise<void> {
 	let preview = "(file missing)";
 	try {
 		const data = readModelsFile();
-		preview = JSON.stringify(data, null, 2).slice(0, 2000);
+		const json = JSON.stringify(data, null, 2);
+		preview = json.length > 2000 ? `${json.slice(0, 2000)}\n…` : json;
 	} catch (err) {
 		preview = err instanceof Error ? err.message : String(err);
 	}

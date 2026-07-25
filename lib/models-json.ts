@@ -1,14 +1,33 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ModelsFile, ProviderConfig } from "./types.ts";
 
 export function getModelsPath(): string {
-	return join(homedir(), ".pi", "agent", "models.json");
+	// getAgentDir honors PI_CODING_AGENT_DIR and rebranded config dirs.
+	return join(getAgentDir(), "models.json");
 }
 
-export function getAgentDir(): string {
-	return join(homedir(), ".pi", "agent");
+/**
+ * Strip `//` line comments and trailing commas, leaving string literals
+ * untouched. Mirrors pi's own models.json parsing (utils/json.ts): pi accepts
+ * JSONC, so we must accept it too.
+ */
+function stripJsonComments(input: string): string {
+	return input
+		.replace(/"(?:\\.|[^"\\])*"|\/\/[^\n]*/g, (m) => (m[0] === '"' ? m : ""))
+		.replace(/"(?:\\.|[^"\\])*"|,(\s*[}\]])/g, (m, tail) => tail ?? (m[0] === '"' ? m : ""));
+}
+
+/** True when models.json contains comments / trailing commas that a rewrite would drop. */
+export function modelsFileHasJsonc(path = getModelsPath()): boolean {
+	if (!existsSync(path)) return false;
+	try {
+		const raw = readFileSync(path, "utf8");
+		return stripJsonComments(raw) !== raw;
+	} catch {
+		return false;
+	}
 }
 
 export function readModelsFile(path = getModelsPath()): ModelsFile {
@@ -17,7 +36,7 @@ export function readModelsFile(path = getModelsPath()): ModelsFile {
 	}
 	try {
 		const raw = readFileSync(path, "utf8");
-		const parsed = JSON.parse(raw) as ModelsFile;
+		const parsed = JSON.parse(stripJsonComments(raw)) as ModelsFile;
 		if (!parsed.providers || typeof parsed.providers !== "object") {
 			parsed.providers = {};
 		}
@@ -35,12 +54,16 @@ export function writeModelsFile(data: ModelsFile, path = getModelsPath()): void 
 		mkdirSync(dir, { recursive: true });
 	}
 	const body = `${JSON.stringify(data, null, 2)}\n`;
-	writeFileSync(path, body, "utf8");
+	// Write to a temp file and rename: pi rejects the whole models.json (all
+	// providers) on a parse error, so a crash mid-write must not corrupt it.
+	const tmp = `${path}.tmp`;
+	writeFileSync(tmp, body, "utf8");
 	try {
-		chmodSync(path, 0o600);
+		chmodSync(tmp, 0o600);
 	} catch {
 		// best-effort; Windows may not support chmod the same way
 	}
+	renameSync(tmp, path);
 }
 
 export function listProviderIds(data: ModelsFile): string[] {

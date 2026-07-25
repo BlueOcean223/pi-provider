@@ -12,7 +12,7 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 - 自动对齐 **pi 官方模型目录**，为选中模型补全 `contextWindow`、`maxTokens`、`reasoning`、`thinkingLevelMap`、`cost` 等元数据；匹配不到则回退默认值（128k 上下文）
 - 支持只改内置供应商的 `baseUrl`（代理模式），无需重建整份配置
 - 内置连通性探测（`/provider test`）
-- 写入的 `models.json` 会尽量收紧权限到 `0600`
+- 写入的 `models.json` 采用原子写入（临时文件 + rename），并尽量收紧权限到 `0600`
 - 无生产依赖：`@earendil-works/pi-coding-agent`、`@earendil-works/pi-tui` 由 pi 运行时提供，装好 pi 即可用
 
 ## 安装
@@ -78,7 +78,7 @@ pi install file:"$(pwd)"
    - 手动输入 model id（逗号或换行分隔；输入多个时同样会进入多选预览）
    - 留空占位（写入 `default-model`，之后手动编辑 `models.json`）
 
-   每个选中的 model id 都会尝试匹配 **pi 官方模型目录**（从已安装 pi 的 `@earendil-works/pi-ai` 数据文件读取）：匹配到则复制官方的 `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` 等字段（`id` 仍然用中转站自己的），匹配不到则用默认值（128k 上下文、非 reasoning、零成本）。
+   每个选中的 model id 都会尝试匹配 **pi 官方模型目录**（直接取自 pi 运行中的模型注册表，因此 npm / pi-node / bun 二进制等各种安装方式都能用，且包含 pi 的远程目录刷新结果）：匹配到则复制官方的 `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` 等字段（`id` 仍然用中转站自己的），匹配不到则用默认值（128k 上下文、非 reasoning、零成本）。
 6. **Compat preset**（仅 OpenAI 系协议出现）：
    - 无（默认）
    - Local / strict OpenAI-compat（关闭 `developer` role 与 `reasoning_effort`）
@@ -97,7 +97,7 @@ pi install file:"$(pwd)"
 
 ### `/provider test`
 
-选择一个已保存的供应商，探测其 `baseUrl`：优先尝试模型 catalog 端点，能列出模型即视为健康；拿不到列表则回退成普通 HTTP 请求按状态码判断。若 `apiKey` 是 `$ENV_VAR` 引用但对应环境变量未设置，会先提示，再无鉴权继续探测。
+选择一个已保存的供应商，探测其 `baseUrl`：优先尝试模型 catalog 端点，能列出模型即视为健康；拿不到列表则回退成普通 HTTP 请求按状态码判断。若 `apiKey` 是 `$ENV_VAR` 引用但对应环境变量未设置（或是 `!command` 形式——这里不会执行命令），会先提示，再无鉴权继续探测。
 
 ### `/provider list` / `/provider remove` / `/provider path`
 
@@ -142,16 +142,18 @@ pi-provider/
 ├── index.ts                  # 注册 /provider 命令与各子命令交互流程
 └── lib/
     ├── types.ts               # ProviderApi / ModelEntry / ProviderConfig 等类型与文案
-    ├── models-json.ts         # 读写 ~/.pi/agent/models.json（含 0600 权限收紧）
+    ├── models-json.ts         # 读写 models.json（兼容 JSONC、原子写入、0600 权限收紧）
     ├── detect-api.ts          # GET /v1/models 探测与连通性测试
-    ├── official-catalog.ts    # 定位并解析已安装 pi 的官方模型目录，做 id 匹配与元数据补全
+    ├── official-catalog.ts    # 从 pi 运行中的模型注册表取官方目录，做 id 匹配与元数据补全
     └── checkbox-select.ts     # 与 pi SettingsList 一致的多选 UI
 ```
 
 ## 注意事项
 
-- 官方模型目录的定位依赖能找到已安装的 `pi` 可执行文件或 `~/.local/share/pi-node` 本地安装；找不到时所有模型都会用默认元数据，不影响正常使用，只是展示的上下文 / 价格不准确
-- 所有交互命令都要求 TUI（`ctx.hasUI`），非交互环境下运行会直接报错并打印 `models.json` 路径
+- models.json 路径与 pi 本体一致，尊重 `PI_CODING_AGENT_DIR` 环境变量；默认为 `~/.pi/agent/models.json`
+- 与 pi 一致，本扩展接受 `models.json` 中的 `//` 注释与尾逗号——但重写文件时它们会被移除（确认框里会提示）
+- 模型元数据直接取自 pi 运行中的模型注册表（`ctx.modelRegistry`），任何安装方式都能补全；万一注册表为空，所有模型回退默认元数据，不影响正常使用，只是展示的上下文 / 价格不准确
+- 各子命令需要可弹对话框的 UI（`ctx.hasUI`：TUI 或 RPC 宿主均可）；RPC 模式下模型多选会退化为编辑器版 on/off 列表。完全非交互环境会直接报错并打印 `models.json` 路径
 
 ## License
 

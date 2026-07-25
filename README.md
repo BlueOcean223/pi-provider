@@ -12,7 +12,7 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 - Auto-enriches selected models against the **official pi model catalog** — fills in `contextWindow`, `maxTokens`, `reasoning`, `thinkingLevelMap`, `cost`, etc.; falls back to sane defaults (128k context) when no match is found
 - Can proxy a built-in provider by overriding just its `baseUrl`, without touching its model list
 - Built-in connectivity probe (`/provider test`)
-- Writes `models.json` with permissions tightened to `0600` where possible
+- Writes `models.json` atomically (temp file + rename) with permissions tightened to `0600` where possible
 - No runtime dependencies of its own: `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` are provided by your pi install
 
 ## Installation
@@ -78,7 +78,7 @@ Inside a pi session (sub-commands support Tab completion):
    - Enter model ids manually (comma- or newline-separated; more than one id also opens the multi-select preview)
    - Minimal placeholder (writes `default-model`, to be edited into `models.json` later)
 
-   Every selected model id is matched against the **official pi model catalog** (read from your installed pi's `@earendil-works/pi-ai` data files): a match copies over the official `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` fields (the `id` itself always stays the relay's own), while a miss falls back to defaults (128k context, non-reasoning, zero cost).
+   Every selected model id is matched against the **official pi model catalog** (taken live from pi's model registry, so it works in every install mode — npm, pi-node, bun binary — and reflects pi's remote catalog refreshes): a match copies over the official `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` fields (the `id` itself always stays the relay's own), while a miss falls back to defaults (128k context, non-reasoning, zero cost).
 6. **Compat preset** (only shown for OpenAI-family protocols):
    - None (defaults)
    - Local / strict OpenAI-compat (disables the `developer` role and `reasoning_effort`)
@@ -97,7 +97,7 @@ Use this when you just want a **built-in** provider (`anthropic`, `openai`, `goo
 
 ### `/provider test`
 
-Pick a saved provider and probe its `baseUrl`: it first tries the model-catalog endpoint — listing any models counts as healthy — then falls back to a plain HTTP request judged by status code. If `apiKey` is a `$ENV_VAR` reference that isn't set, it warns first and then probes without auth.
+Pick a saved provider and probe its `baseUrl`: it first tries the model-catalog endpoint — listing any models counts as healthy — then falls back to a plain HTTP request judged by status code. If `apiKey` is a `$ENV_VAR` reference that isn't set (or a `!command`, which is never executed here), it warns first and then probes without auth.
 
 ### `/provider list` / `/provider remove` / `/provider path`
 
@@ -142,16 +142,18 @@ pi-provider/
 ├── index.ts                  # registers /provider and its sub-command flows
 └── lib/
     ├── types.ts               # ProviderApi / ModelEntry / ProviderConfig types & labels
-    ├── models-json.ts         # read/write ~/.pi/agent/models.json (incl. 0600 permission tightening)
+    ├── models-json.ts         # read/write models.json (JSONC-tolerant, atomic write, 0600 tightening)
     ├── detect-api.ts          # GET /v1/models discovery and connectivity probing
-    ├── official-catalog.ts    # locates & parses the installed pi's official model catalog, does id matching + enrichment
+    ├── official-catalog.ts    # snapshots pi's live model registry catalog, does id matching + enrichment
     └── checkbox-select.ts     # multi-select UI matching pi's SettingsList
 ```
 
 ## Notes
 
-- Locating the official model catalog depends on finding an installed `pi` executable or a local `~/.local/share/pi-node` install; if neither is found, all models fall back to default metadata — everything still works, just with less accurate context/pricing shown
-- Every sub-command requires a TUI (`ctx.hasUI`); running in a non-interactive environment errors out immediately and prints the `models.json` path
+- The models.json path honors `PI_CODING_AGENT_DIR` (same as pi itself); the default is `~/.pi/agent/models.json`
+- Like pi, this extension accepts `//` comments and trailing commas in `models.json` — but they are dropped when it rewrites the file (you'll be reminded in the confirm dialog)
+- Model metadata comes from pi's live model registry (`ctx.modelRegistry`), so enrichment works in every install mode; if the registry is somehow empty, models fall back to default metadata — everything still works, just with less accurate context/pricing shown
+- Sub-commands need dialog-capable UI (`ctx.hasUI`: TUI or RPC hosts); in RPC mode the model multi-select falls back to an editor-based on/off list. Fully non-interactive runs error out immediately and print the `models.json` path
 
 ## License
 

@@ -21,14 +21,18 @@ export interface CheckboxItem {
  * - Esc finishes and returns currently-on items (same pattern as /tools)
  */
 export async function checkboxSelect(
-	ui: ExtensionCommandContext["ui"],
+	ctx: ExtensionCommandContext,
 	title: string,
 	items: CheckboxItem[],
 ): Promise<string[] | undefined> {
+	const { ui } = ctx;
 	if (items.length === 0) return [];
 
-	if (typeof ui.custom !== "function") {
-		// Non-TUI fallback
+	// ui.custom is TUI-only: outside "tui" it exists but is a no-op stub that
+	// resolves undefined without invoking the factory (e.g. RPC mode), so guard
+	// on mode — not on the function's presence.
+	if (ctx.mode !== "tui") {
+		// Non-TUI fallback (ui.editor works over RPC)
 		const prefill = items.map((i) => `${i.checked ? "on " : "off"} ${i.id}`).join("\n");
 		const edited = await ui.editor(
 			`${title}\n(set line to "on <id>" to include, "off <id>" to skip)`,
