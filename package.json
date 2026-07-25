@@ -1,0 +1,11 @@
+{
+  "name": "pi-provider",
+  "version": "0.1.0",
+  "description": "Pi slash command to add/edit custom providers (relays, proxies) in models.json",
+  "license": "MIT",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "keywords": ["pi", "pi-coding-agent", "provider", "models.json", "relay"]
+}
