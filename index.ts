@@ -20,11 +20,14 @@ import {
 	listProviderIds,
 	modelsFileHasJsonc,
 	readModelsFile,
+	readModelsFileRaw,
 	removeProvider,
 	sanitizeProviderId,
 	summarizeProvider,
 	upsertProvider,
+	validateModelsText,
 	writeModelsFile,
+	writeModelsFileRaw,
 } from "./lib/models-json.ts";
 import {
 	catalogFromRegistry,
@@ -531,15 +534,24 @@ async function cmdTest(ctx: ExtensionCommandContext): Promise<void> {
 async function cmdShowPath(ctx: ExtensionCommandContext): Promise<void> {
 	const { ui } = ctx;
 	const path = getModelsPath();
-	let preview = "(file missing)";
-	try {
-		const data = readModelsFile();
-		const json = JSON.stringify(data, null, 2);
-		preview = json.length > 2000 ? `${json.slice(0, 2000)}\n…` : json;
-	} catch (err) {
-		preview = err instanceof Error ? err.message : String(err);
+	const original = readModelsFileRaw() ?? '{\n  "providers": {}\n}\n';
+
+	const edited = await ui.editor(`models.json — ${path}`, original);
+	if (edited === undefined || edited.trimEnd() === original.trimEnd()) return;
+
+	const err = validateModelsText(edited);
+	if (err) {
+		ui.notify(`Not saved — invalid models.json: ${err}`, "error");
+		return;
 	}
-	await ui.editor(`models.json — ${path}`, preview);
+
+	const ok = await ui.confirm("Save models.json?", `Write edited content to ${path}?`);
+	if (!ok) {
+		ui.notify("Cancelled", "info");
+		return;
+	}
+	writeModelsFileRaw(edited);
+	ui.notify(`Saved ${path}`, "info");
 }
 
 async function mainMenu(ctx: ExtensionCommandContext): Promise<void> {

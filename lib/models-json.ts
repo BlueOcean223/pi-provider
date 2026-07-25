@@ -30,6 +30,45 @@ export function modelsFileHasJsonc(path = getModelsPath()): boolean {
 	}
 }
 
+/** Raw file text, or undefined when the file doesn't exist. */
+export function readModelsFileRaw(path = getModelsPath()): string | undefined {
+	if (!existsSync(path)) return undefined;
+	return readFileSync(path, "utf8");
+}
+
+/** Returns an error message if `text` isn't valid models.json (JSONC allowed), else null. */
+export function validateModelsText(text: string): string | null {
+	try {
+		const parsed = JSON.parse(stripJsonComments(text)) as ModelsFile;
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			return "Top-level value must be an object";
+		}
+		if (parsed.providers !== undefined && typeof parsed.providers !== "object") {
+			return '"providers" must be an object';
+		}
+		return null;
+	} catch (err) {
+		return err instanceof Error ? err.message : String(err);
+	}
+}
+
+/** Write raw text atomically, preserving comments/formatting as-is. */
+export function writeModelsFileRaw(text: string, path = getModelsPath()): void {
+	const dir = dirname(path);
+	if (!existsSync(dir)) {
+		mkdirSync(dir, { recursive: true });
+	}
+	const body = text.endsWith("\n") ? text : `${text}\n`;
+	const tmp = `${path}.tmp`;
+	writeFileSync(tmp, body, "utf8");
+	try {
+		chmodSync(tmp, 0o600);
+	} catch {
+		// best-effort; Windows may not support chmod the same way
+	}
+	renameSync(tmp, path);
+}
+
 export function readModelsFile(path = getModelsPath()): ModelsFile {
 	if (!existsSync(path)) {
 		return { providers: {} };
