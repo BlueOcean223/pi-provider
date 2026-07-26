@@ -4,6 +4,9 @@
   "description": "Pi slash command to add/edit custom providers (relays, proxies) in models.json",
   "license": "MIT",
   "type": "module",
+  "scripts": {
+    "test": "node --test 'lib/*.test.ts'"
+  },
   "pi": {
     "extensions": ["./index.ts"]
   },
