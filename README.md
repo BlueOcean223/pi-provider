@@ -97,7 +97,12 @@ Use this when you just want a **built-in** provider (`anthropic`, `openai`, `goo
 
 ### `/provider test`
 
-Pick a saved provider and probe its `baseUrl`: it first tries the model-catalog endpoint — listing any models counts as healthy — then falls back to a plain HTTP request judged by status code. If `apiKey` is a `$ENV_VAR` reference that isn't set (or a `!command`, which is never executed here), it warns first and then probes without auth.
+Pick a saved provider (and a model, when several are configured) and both checks run live in one panel — spinners settle into ✓/✗ in place, Esc aborts the in-flight requests, and closing the panel leaves nothing behind in the chat log:
+
+- **Catalog probe** — tries the model-catalog endpoint (listing any models counts as healthy), falling back to a plain HTTP request judged by status code
+- **Chat test** — a real minimal `"hi"` request through the provider's configured protocol, the same way relay panels (one-api / new-api) test channels; skipped for baseUrl-only proxies and providers without custom models
+
+If `apiKey` is a `$ENV_VAR` reference that isn't set (or a `!command`, which is never executed here), the panel notes it and tests without auth. Press `r` inside the panel to run the checks again.
 
 ### `/provider list` / `/provider remove` / `/provider path`
 
@@ -145,8 +150,12 @@ pi-provider/
     ├── models-json.ts         # read/write models.json (JSONC-tolerant, atomic write, 0600 tightening)
     ├── detect-api.ts          # GET /v1/models discovery and connectivity probing
     ├── official-catalog.ts    # snapshots pi's live model registry catalog, does id matching + enrichment
+    ├── loop-ui.ts             # wrap-around select/editor, wizard step machine, spinner helper
+    ├── checks-panel.ts        # live ✓/✗ checklist panel used by /provider test
     └── checkbox-select.ts     # multi-select UI matching pi's SettingsList
 ```
+
+Run the tests (wizard step machine, chat-ping URL/protocol logic) with `npm test` (Node 22+).
 
 ## Notes
 

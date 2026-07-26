@@ -97,7 +97,12 @@ pi install file:"$(pwd)"
 
 ### `/provider test`
 
-选择一个已保存的供应商，探测其 `baseUrl`：优先尝试模型 catalog 端点，能列出模型即视为健康；拿不到列表则回退成普通 HTTP 请求按状态码判断。若 `apiKey` 是 `$ENV_VAR` 引用但对应环境变量未设置（或是 `!command` 形式——这里不会执行命令），会先提示，再无鉴权继续探测。
+选择一个已保存的供应商（配置了多个模型时再选一个模型），两项检查会在同一个实时面板里并发进行——spinner 原地变成 ✓/✗，Esc 可中断请求，关闭面板后聊天记录中不留任何痕迹：
+
+- **Catalog 探测**——尝试模型 catalog 端点，能列出模型即视为健康；拿不到列表则回退成普通 HTTP 请求按状态码判断
+- **Chat 测试**——用该供应商配置的协议真实发送一条最小的 `"hi"` 请求，与中转站面板（one-api / new-api）测试渠道的方式一致；仅 baseUrl 代理或没有自定义模型的供应商会跳过
+
+若 `apiKey` 是 `$ENV_VAR` 引用但对应环境变量未设置（或是 `!command` 形式——这里不会执行命令），面板内会标注并以无鉴权方式测试。面板内按 `r` 可重新运行检查。
 
 ### `/provider list` / `/provider remove` / `/provider path`
 
@@ -145,8 +150,12 @@ pi-provider/
     ├── models-json.ts         # 读写 models.json（兼容 JSONC、原子写入、0600 权限收紧）
     ├── detect-api.ts          # GET /v1/models 探测与连通性测试
     ├── official-catalog.ts    # 从 pi 运行中的模型注册表取官方目录，做 id 匹配与元数据补全
+    ├── loop-ui.ts             # 循环滚动 select/editor、向导步骤机、spinner 助手
+    ├── checks-panel.ts        # /provider test 使用的 ✓/✗ 实时检查面板
     └── checkbox-select.ts     # 与 pi SettingsList 一致的多选 UI
 ```
+
+运行 `npm test`（Node 22+）执行测试（向导步骤机、chat ping 的 URL/协议逻辑）。
 
 ## 注意事项
 
