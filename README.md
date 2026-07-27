@@ -166,4 +166,4 @@ Run the tests (wizard step machine, chat-ping URL/protocol logic) with `npm test
 
 ## License
 
-MIT (see `package.json`)
+MIT (see [LICENSE](LICENSE))

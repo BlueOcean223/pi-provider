@@ -166,4 +166,4 @@ pi-provider/
 
 ## License
 
-MIT（见 `package.json`）
+MIT（见 [LICENSE](LICENSE)）
