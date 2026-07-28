@@ -6,6 +6,7 @@
  *
  * Usage in pi:  /provider
  *               /provider add
+ *               /provider models [provider-id]
  *               /provider list
  *               /provider remove
  *               /provider proxy
@@ -28,6 +29,11 @@ import {
 	type WizardStep,
 	withSpinner,
 } from "./lib/loop-ui.ts";
+import {
+	findNewRelayModels,
+	mergeModelAdditions,
+	removeModelEntries,
+} from "./lib/model-management.ts";
 import {
 	getModelsPath,
 	listProviderIds,
@@ -64,10 +70,14 @@ const LABEL_TO_API: Record<string, ProviderApi> = Object.fromEntries(
 ) as Record<string, ProviderApi>;
 
 function parseModelIds(raw: string): string[] {
-	return raw
-		.split(/[\n,]+/)
-		.map((s) => s.trim())
-		.filter(Boolean);
+	return Array.from(
+		new Set(
+			raw
+				.split(/[\n,]+/)
+				.map((s) => s.trim())
+				.filter(Boolean),
+		),
+	);
 }
 
 function resolveProbeKey(apiKey?: string): string | undefined {
@@ -78,6 +88,50 @@ function resolveProbeKey(apiKey?: string): string | undefined {
 		return process.env[envName];
 	}
 	return apiKey;
+}
+
+interface ResolvedCatalogAuth {
+	apiKey?: string;
+	headers?: Record<string, string | null>;
+}
+
+async function resolveSavedProviderAuth(
+	ctx: ExtensionCommandContext,
+	providerId: string,
+	configuredApiKey?: string,
+): Promise<ResolvedCatalogAuth> {
+	const fallbackApiKey = resolveProbeKey(configuredApiKey);
+	try {
+		const model = ctx.modelRegistry.getAll().find((candidate) => candidate.provider === providerId);
+		if (model) {
+			const requestAuth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+			if (requestAuth.ok) {
+				return {
+					apiKey: requestAuth.apiKey ?? fallbackApiKey,
+					headers: requestAuth.headers,
+				};
+			}
+		}
+
+		const resolved = await ctx.modelRegistry.getProviderAuth(providerId);
+		return {
+			apiKey: resolved?.auth.apiKey ?? fallbackApiKey,
+			headers: resolved?.auth.headers,
+		};
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		ctx.ui.notify(`Could not resolve saved auth for ${providerId}: ${message}`, "warning");
+		return { apiKey: fallbackApiKey };
+	}
+}
+
+async function refreshModelRegistry(ctx: ExtensionCommandContext): Promise<void> {
+	try {
+		await ctx.modelRegistry.refresh();
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		ctx.ui.notify(`Could not refresh the model registry: ${message}`, "warning");
+	}
 }
 
 /** Enrich selected relay model ids with official pi catalog metadata. */
@@ -113,6 +167,7 @@ async function pickModelsFromList(
 	catalog: OfficialModelMeta[],
 	listed: Array<{ id: string; name?: string }>,
 	api: ProviderApi,
+	options?: { title?: string; checked?: boolean },
 ): Promise<ModelEntry[] | null> {
 	const { ui } = ctx;
 	// Pre-enrich for display descriptions (ctx / thinking / match)
@@ -130,13 +185,13 @@ async function pickModelsFromList(
 			id: m.id,
 			label: m.id,
 			description: `${badge} · ${ctx} ctx · ${think}${r.matched ? ` · ${r.matched}` : ""}`,
-			checked: false,
+			checked: options?.checked ?? false,
 		};
 	});
 
 	const selectedIds = await checkboxSelect(
 		ctx,
-		`Select models to add (${listed.length} from relay)`,
+		options?.title ?? `Select models to add (${listed.length} from relay)`,
 		checkboxItems,
 	);
 	if (selectedIds === undefined) return null;
@@ -150,6 +205,78 @@ async function pickModelsFromList(
 		return { id, name: found?.name };
 	});
 	return buildEnrichedModels(catalog, selected, api, ui);
+}
+
+async function enterModelsManually(
+	ctx: ExtensionCommandContext,
+	catalog: OfficialModelMeta[],
+	api: ProviderApi,
+): Promise<ModelEntry[] | null> {
+	const { ui } = ctx;
+	const raw = await loopEditor(
+		ctx,
+		"Model ids (one per line or comma-separated; Esc = back)",
+		"gpt-4o\nclaude-sonnet-4",
+	);
+	if (raw === undefined) return null;
+	const ids = parseModelIds(raw);
+	if (ids.length === 0) {
+		ui.notify("No model ids entered", "error");
+		return null;
+	}
+	if (ids.length > 1) {
+		return pickModelsFromList(
+			ctx,
+			catalog,
+			ids.map((id) => ({ id })),
+			api,
+			{ title: `Review models to add (${ids.length} entered)`, checked: true },
+		);
+	}
+	return buildEnrichedModels(
+		catalog,
+		ids.map((id) => ({ id })),
+		api,
+		ui,
+	);
+}
+
+async function pickModelsToRemove(
+	ctx: ExtensionCommandContext,
+	models: ModelEntry[],
+): Promise<string[] | null> {
+	const { ui } = ctx;
+	const seen = new Set<string>();
+	const items = models.flatMap((model) => {
+		if (seen.has(model.id)) return [];
+		seen.add(model.id);
+		const think = model.thinkingLevelMap
+			? "think"
+			: model.reasoning
+				? "reasoning"
+				: "—";
+		const name = model.name && model.name !== model.id ? `${model.name} · ` : "";
+		return [
+			{
+				id: model.id,
+				label: model.id,
+				description: `${name}${formatCtx(model.contextWindow)} ctx · ${think}`,
+				checked: false,
+			},
+		];
+	});
+
+	const selected = await checkboxSelect(
+		ctx,
+		`Select models to remove (${items.length} configured)`,
+		items,
+	);
+	if (selected === undefined) return null;
+	if (selected.length === 0) {
+		ui.notify("No models selected", "warning");
+		return null;
+	}
+	return selected;
 }
 
 /* ------------------------------------------------------------------ */
@@ -226,33 +353,6 @@ async function collectModelsStep(
 ): Promise<StepOutcome> {
 	const { ui } = ctx;
 	const api = st.api ?? "openai-completions";
-	const manualEntry = async (): Promise<ModelEntry[] | null> => {
-		const raw = await loopEditor(
-			ctx,
-			"Model ids (one per line or comma-separated; Esc = back)",
-			"gpt-4o\nclaude-sonnet-4",
-		);
-		if (raw === undefined) return null;
-		const ids = parseModelIds(raw);
-		if (ids.length === 0) {
-			ui.notify("No model ids entered", "error");
-			return null;
-		}
-		if (ids.length > 1) {
-			return pickModelsFromList(
-				ctx,
-				catalog,
-				ids.map((id) => ({ id })),
-				api,
-			);
-		}
-		return buildEnrichedModels(
-			catalog,
-			ids.map((id) => ({ id })),
-			api,
-			ui,
-		);
-	};
 
 	while (true) {
 		const mode = await loopSelect(
@@ -286,7 +386,7 @@ async function collectModelsStep(
 					`No models listed (${listed.error ?? "empty"}). Tried: ${listed.tried.join(", ")}. Fall back to manual entry.`,
 					"warning",
 				);
-				const models = await manualEntry();
+				const models = await enterModelsManually(ctx, catalog, api);
 				if (!models) continue;
 				st.models = models;
 				return "next";
@@ -302,7 +402,7 @@ async function collectModelsStep(
 		}
 
 		// Manual entry
-		const models = await manualEntry();
+		const models = await enterModelsManually(ctx, catalog, api);
 		if (!models) continue;
 		st.models = models;
 		return "next";
@@ -463,6 +563,342 @@ async function cmdAdd(ctx: ExtensionCommandContext): Promise<void> {
 	];
 
 	await runWizard(steps);
+}
+
+function isProviderApi(value: unknown): value is ProviderApi {
+	return typeof value === "string" && API_OPTIONS.includes(value as ProviderApi);
+}
+
+function inferProviderApi(cfg: ProviderConfig): ProviderApi | undefined {
+	if (isProviderApi(cfg.api)) return cfg.api;
+	const modelApis = new Set(
+		(cfg.models ?? [])
+			.map((model) => model.api)
+			.filter((api): api is ProviderApi => isProviderApi(api)),
+	);
+	if (modelApis.size !== 1) return undefined;
+	const first = modelApis.values().next();
+	return first.done ? undefined : first.value;
+}
+
+function canManageProviderModels(cfg: ProviderConfig): boolean {
+	return Boolean(cfg.models?.length || (cfg.baseUrl && inferProviderApi(cfg)));
+}
+
+function modelsKnownToProvider(
+	ctx: ExtensionCommandContext,
+	providerId: string,
+	cfg: ProviderConfig,
+): ModelEntry[] {
+	const known = [...(cfg.models ?? [])];
+	const ids = new Set(known.map((model) => model.id));
+	for (const model of ctx.modelRegistry.getAll()) {
+		if (model.provider !== providerId || ids.has(model.id)) continue;
+		ids.add(model.id);
+		known.push({ id: model.id });
+	}
+	return known;
+}
+
+function additionsWithRequiredApi(
+	cfg: ProviderConfig,
+	api: ProviderApi,
+	additions: ModelEntry[],
+): ModelEntry[] {
+	if (cfg.api) return additions;
+	return additions.map((model) => (model.api ? model : { ...model, api }));
+}
+
+async function saveModelAdditions(
+	ctx: ExtensionCommandContext,
+	providerId: string,
+	api: ProviderApi,
+	additions: ModelEntry[],
+): Promise<boolean> {
+	const { ui } = ctx;
+	const before = readModelsFile();
+	const cfg = before.providers?.[providerId];
+	if (!cfg) {
+		ui.notify(`Provider "${providerId}" no longer exists`, "error");
+		return false;
+	}
+
+	const plannedAdditions = additionsWithRequiredApi(cfg, api, additions);
+	const planned = mergeModelAdditions(cfg.models ?? [], plannedAdditions);
+	if (planned.addedIds.length === 0) {
+		ui.notify(`No new models to add to ${providerId}`, "info");
+		return false;
+	}
+
+	const preview = planned.addedIds.map((id) => `+ ${id}`).join("\n");
+	const jsoncNote = modelsFileHasJsonc()
+		? "\n\nNote: // comments and trailing commas in models.json will be removed on save."
+		: "";
+	const choice = await loopSelect(
+		ctx,
+		`Update provider "${providerId}"?\n\n${preview.slice(0, 1200)}${
+			preview.length > 1200 ? "\n…" : ""
+		}\n\n${planned.addedIds.length} added · ${cfg.models?.length ?? 0} unchanged · 0 removed\nFile: ${getModelsPath()}${jsoncNote}`,
+		["Yes — add models", "No — back"],
+		{ escLabel: "back" },
+	);
+	if (choice === undefined || choice.startsWith("No")) return false;
+
+	// Re-read immediately before writing so unrelated provider/config edits made
+	// while the catalog and confirmation dialogs were open are preserved.
+	const fresh = readModelsFile();
+	const freshCfg = fresh.providers?.[providerId];
+	if (!freshCfg) {
+		ui.notify(`Provider "${providerId}" no longer exists`, "error");
+		return false;
+	}
+	const freshAdditions = additionsWithRequiredApi(freshCfg, api, additions);
+	const merged = mergeModelAdditions(freshCfg.models ?? [], freshAdditions);
+	if (merged.addedIds.length === 0) {
+		ui.notify(`${providerId} already contains the selected models`, "info");
+		return true;
+	}
+
+	writeModelsFile(
+		upsertProvider(fresh, providerId, {
+			...freshCfg,
+			models: merged.models,
+		}),
+	);
+	ui.notify(
+		`Added ${merged.addedIds.length} model(s) to ${providerId}. Open /model to select.`,
+		"info",
+	);
+	return true;
+}
+
+async function saveModelRemovals(
+	ctx: ExtensionCommandContext,
+	providerId: string,
+	selectedIds: string[],
+): Promise<boolean> {
+	const { ui } = ctx;
+	const before = readModelsFile();
+	const cfg = before.providers?.[providerId];
+	if (!cfg) {
+		ui.notify(`Provider "${providerId}" no longer exists`, "error");
+		return false;
+	}
+
+	const planned = removeModelEntries(cfg.models ?? [], selectedIds);
+	if (planned.removedIds.length === 0) {
+		ui.notify(`The selected models are no longer configured on ${providerId}`, "info");
+		return false;
+	}
+
+	const preview = planned.removedIds.map((id) => `- ${id}`).join("\n");
+	const jsoncNote = modelsFileHasJsonc()
+		? "\n\nNote: // comments and trailing commas in models.json will be removed on save."
+		: "";
+	const choice = await loopSelect(
+		ctx,
+		`Remove models from "${providerId}"?\n\n${preview.slice(0, 1200)}${
+			preview.length > 1200 ? "\n…" : ""
+		}\n\n${planned.removedIds.length} removed · ${planned.models.length} kept\nFile: ${getModelsPath()}${jsoncNote}`,
+		["Yes — remove models", "No — back"],
+		{ escLabel: "back" },
+	);
+	if (choice === undefined || choice.startsWith("No")) return false;
+
+	// Apply the selected ids to the latest file contents so unrelated additions
+	// or metadata edits made while the dialogs were open remain intact.
+	const fresh = readModelsFile();
+	const freshCfg = fresh.providers?.[providerId];
+	if (!freshCfg) {
+		ui.notify(`Provider "${providerId}" no longer exists`, "error");
+		return false;
+	}
+	const removed = removeModelEntries(freshCfg.models ?? [], selectedIds);
+	if (removed.removedIds.length === 0) {
+		ui.notify(`${providerId} no longer contains the selected models`, "info");
+		return true;
+	}
+
+	const preservedApi =
+		removed.models.length === 0 && !freshCfg.api ? inferProviderApi(freshCfg) : undefined;
+	writeModelsFile(
+		upsertProvider(fresh, providerId, {
+			...freshCfg,
+			...(preservedApi ? { api: preservedApi } : {}),
+			models: removed.models,
+		}),
+	);
+	ui.notify(
+		`Removed ${removed.removedIds.length} model(s) from ${providerId}. Open /model to refresh.`,
+		"info",
+	);
+	return true;
+}
+
+async function manageProviderModels(
+	ctx: ExtensionCommandContext,
+	providerId: string,
+): Promise<boolean> {
+	const { ui } = ctx;
+
+	while (true) {
+		const data = readModelsFile();
+		const cfg = data.providers?.[providerId];
+		if (!cfg) {
+			ui.notify(`Unknown provider "${providerId}"`, "error");
+			return false;
+		}
+		const api = inferProviderApi(cfg);
+		const actions: string[] = [];
+		if (cfg.baseUrl && api) {
+			actions.push("Discover and add new models", "Enter model ids manually");
+		}
+		if (cfg.models?.length) actions.push("Remove configured models");
+		if (actions.length === 0) {
+			ui.notify(
+				`${providerId} has neither removable custom models nor enough configuration to add models`,
+				"error",
+			);
+			return false;
+		}
+
+		const action = await loopSelect(
+			ctx,
+			`Manage models: ${providerId} (${cfg.models?.length ?? 0} configured)`,
+			actions,
+			{ escLabel: "back" },
+		);
+		if (action === undefined) return false;
+
+		if (action.startsWith("Remove")) {
+			const selected = await pickModelsToRemove(ctx, cfg.models ?? []);
+			if (!selected) continue;
+			if (await saveModelRemovals(ctx, providerId, selected)) return true;
+			continue;
+		}
+
+		if (!cfg.baseUrl || !api) {
+			ui.notify(`${providerId} needs both baseUrl and an API protocol to add models`, "error");
+			continue;
+		}
+
+		const relayProviderIds = Object.entries(data.providers ?? {})
+			.filter(([, provider]) => provider.models?.length)
+			.map(([id]) => id);
+		const catalog = catalogFromRegistry(ctx, relayProviderIds);
+		let additions: ModelEntry[] | null = null;
+
+		if (action.startsWith("Discover")) {
+			// models.json may have changed since the registry was last loaded (for
+			// example after an earlier add/remove in this session). Refresh before
+			// using effective provider models to calculate the remote diff.
+			await refreshModelRegistry(ctx);
+			const listed = await withSpinner(
+				ctx,
+				`Fetching model catalog from ${cfg.baseUrl}…`,
+				async (signal) => {
+					const auth = await resolveSavedProviderAuth(ctx, providerId, cfg.apiKey);
+					return listOpenAIModels({
+						baseUrl: cfg.baseUrl!,
+						apiKey: auth.apiKey,
+						headers: auth.headers,
+						signal,
+					});
+				},
+			);
+			if (listed === undefined) continue;
+			if (listed.models.length === 0) {
+				ui.notify(
+					`No models listed (${listed.error ?? "empty"}). Tried: ${listed.tried.join(", ")}. You can enter ids manually instead.`,
+					"warning",
+				);
+				continue;
+			}
+
+			// Include effective registry models as well as models.json entries. This
+			// prevents a built-in provider override from re-adding its inherited
+			// built-in models as custom entries (which would replace their metadata).
+			const candidates = findNewRelayModels(
+				modelsKnownToProvider(ctx, providerId, cfg),
+				listed.models,
+			);
+			if (candidates.length === 0) {
+				ui.notify(
+					`${providerId} is up to date: ${listed.models.length} listed, 0 new`,
+					"info",
+				);
+				continue;
+			}
+
+			const mode = await loopSelect(
+				ctx,
+				`Found ${listed.models.length} model(s)${listed.matchedUrl ? ` from ${listed.matchedUrl}` : ""}\n${cfg.models?.length ?? 0} configured · ${candidates.length} new`,
+				[
+					`Add all ${candidates.length} new models`,
+					"Select new models to add",
+					"Back",
+				],
+				{ escLabel: "back" },
+			);
+			if (mode === undefined || mode === "Back") continue;
+			additions = mode.startsWith("Add all")
+				? buildEnrichedModels(catalog, candidates, api, ui)
+				: await pickModelsFromList(ctx, catalog, candidates, api, {
+						title: `Select new models to add (${candidates.length} available)`,
+					});
+		} else {
+			additions = await enterModelsManually(ctx, catalog, api);
+		}
+
+		if (!additions || additions.length === 0) continue;
+		if (await saveModelAdditions(ctx, providerId, api, additions)) return true;
+	}
+}
+
+async function cmdModels(
+	ctx: ExtensionCommandContext,
+	requestedProviderId?: string,
+): Promise<void> {
+	const { ui } = ctx;
+	let direct = requestedProviderId?.trim();
+
+	while (true) {
+		const data = readModelsFile();
+		const manageableIds = listProviderIds(data).filter((id) => {
+			const cfg = data.providers?.[id];
+			return Boolean(cfg && canManageProviderModels(cfg));
+		});
+
+		let providerId: string | undefined;
+		if (direct) {
+			providerId = data.providers?.[direct]
+				? direct
+				: listProviderIds(data).find((id) => id.toLowerCase() === direct!.toLowerCase());
+			if (!providerId) {
+				ui.notify(`Unknown provider "${direct}"`, "error");
+				return;
+			}
+			if (!manageableIds.includes(providerId)) {
+				ui.notify(`${providerId} has no custom models to remove and cannot add models`, "error");
+				return;
+			}
+		} else {
+			if (manageableIds.length === 0) {
+				ui.notify("No providers with custom models or enough configuration to add them.", "info");
+				return;
+			}
+			const lines = manageableIds.map((id) => summarizeProvider(id, data.providers![id]!));
+			const picked = await loopSelect(ctx, "Provider whose models you want to manage", lines);
+			if (!picked) return;
+			providerId = manageableIds[lines.indexOf(picked)];
+			if (!providerId) return;
+		}
+
+		const saved = await manageProviderModels(ctx, providerId);
+		if (saved || direct) return;
+		// Back from the action menu returns to the provider list.
+		direct = undefined;
+	}
 }
 
 async function cmdProxy(ctx: ExtensionCommandContext): Promise<void> {
@@ -773,6 +1209,7 @@ async function mainMenu(ctx: ExtensionCommandContext): Promise<void> {
 	while (true) {
 		const action = await loopSelect(ctx, "Provider setup", [
 			"Add custom provider (relay / 中转站)",
+			"Manage models for existing provider",
 			"Proxy built-in provider (baseUrl only)",
 			"List / view providers",
 			"Remove provider",
@@ -782,6 +1219,7 @@ async function mainMenu(ctx: ExtensionCommandContext): Promise<void> {
 		if (!action) return;
 
 		if (action.startsWith("Add")) await cmdAdd(ctx);
+		else if (action.startsWith("Manage models")) await cmdModels(ctx);
 		else if (action.startsWith("Proxy")) await cmdProxy(ctx);
 		else if (action.startsWith("List")) await cmdList(ctx);
 		else if (action.startsWith("Remove")) await cmdRemove(ctx);
@@ -794,9 +1232,34 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("provider", {
 		description: "Manage custom providers / relays in models.json",
 		getArgumentCompletions: (prefix: string) => {
-			const sub = ["add", "proxy", "list", "remove", "test", "path"];
+			const modelsMatch = prefix.match(/^\s*(models|add-models)\s+(.*)$/i);
+			if (modelsMatch) {
+				const command = modelsMatch[1]!.toLowerCase();
+				const query = modelsMatch[2]!.trim().toLowerCase();
+				try {
+					const data = readModelsFile();
+					const items = listProviderIds(data)
+						.filter((id) => {
+							const cfg = data.providers?.[id];
+							return Boolean(
+								id.toLowerCase().startsWith(query) && cfg && canManageProviderModels(cfg),
+							);
+						})
+						.map((id) => ({
+							value: `${command} ${id}`,
+							label: id,
+							description: summarizeProvider(id, data.providers![id]!),
+						}));
+					return items.length > 0 ? items : null;
+				} catch {
+					return null;
+				}
+			}
+
+			const sub = ["add", "models", "add-models", "proxy", "list", "remove", "test", "path"];
+			const query = prefix.trim().toLowerCase();
 			const items = sub
-				.filter((s) => s.startsWith(prefix.trim()))
+				.filter((s) => s.startsWith(query))
 				.map((s) => ({ value: s, label: s }));
 			return items.length > 0 ? items : null;
 		},
@@ -809,11 +1272,18 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			const sub = (args ?? "").trim().toLowerCase().split(/\s+/)[0] ?? "";
+			const rawArgs = (args ?? "").trim();
+			const parts = rawArgs ? rawArgs.split(/\s+/) : [];
+			const sub = (parts[0] ?? "").toLowerCase();
+			const requestedProviderId = parts[1];
 			try {
 				switch (sub) {
 					case "add":
 						await cmdAdd(ctx);
+						break;
+					case "models":
+					case "add-models":
+						await cmdModels(ctx, requestedProviderId);
 						break;
 					case "proxy":
 						await cmdProxy(ctx);
@@ -837,7 +1307,7 @@ export default function (pi: ExtensionAPI) {
 						break;
 					default:
 						ctx.ui.notify(
-							`Unknown subcommand "${sub}". Try: add | proxy | list | remove | test | path`,
+							`Unknown subcommand "${sub}". Try: add | models | proxy | list | remove | test | path`,
 							"error",
 						);
 				}

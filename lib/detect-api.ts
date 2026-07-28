@@ -4,11 +4,19 @@ function stripTrailingSlash(url: string): string {
 	return url.replace(/\/+$/, "");
 }
 
-function authHeaders(apiKey?: string): Record<string, string> {
+function authHeaders(
+	apiKey?: string,
+	overrides?: Record<string, string | null>,
+): Record<string, string> {
 	const headers: Record<string, string> = { Accept: "application/json" };
 	if (apiKey?.trim()) {
 		headers.Authorization = `Bearer ${apiKey.trim()}`;
 		headers["x-api-key"] = apiKey.trim();
+	}
+	for (const [name, value] of Object.entries(overrides ?? {})) {
+		const existing = Object.keys(headers).find((key) => key.toLowerCase() === name.toLowerCase());
+		if (existing) delete headers[existing];
+		if (value !== null) headers[name] = value;
 	}
 	return headers;
 }
@@ -28,12 +36,13 @@ async function tryFetchJson(
 	apiKey: string | undefined,
 	timeoutMs = 8000,
 	signal?: AbortSignal,
+	headers?: Record<string, string | null>,
 ): Promise<{ ok: boolean; status: number; json?: unknown; error?: string }> {
 	const { combined, timeout } = requestSignal(timeoutMs, signal);
 	try {
 		const res = await fetch(url, {
 			method: "GET",
-			headers: authHeaders(apiKey),
+			headers: authHeaders(apiKey, headers),
 			signal: combined,
 		});
 		const text = await res.text();
@@ -112,6 +121,7 @@ export function modelCatalogUrls(baseUrl: string): string[] {
 export async function listOpenAIModels(options: {
 	baseUrl: string;
 	apiKey?: string;
+	headers?: Record<string, string | null>;
 	signal?: AbortSignal;
 }): Promise<{
 	models: Array<{ id: string; name?: string }>;
@@ -126,7 +136,13 @@ export async function listOpenAIModels(options: {
 	for (const url of urls) {
 		if (options.signal?.aborted) break;
 		tried.push(url);
-		const res = await tryFetchJson(url, options.apiKey, undefined, options.signal);
+		const res = await tryFetchJson(
+			url,
+			options.apiKey,
+			undefined,
+			options.signal,
+			options.headers,
+		);
 		if (!res.ok || res.json === undefined) {
 			lastError = res.error ?? `HTTP ${res.status}`;
 			continue;
@@ -144,6 +160,7 @@ export async function listOpenAIModels(options: {
 export async function probeEndpoint(options: {
 	baseUrl: string;
 	apiKey?: string;
+	headers?: Record<string, string | null>;
 	signal?: AbortSignal;
 }): Promise<{ ok: boolean; status: number; url: string; detail: string }> {
 	const listed = await listOpenAIModels(options);
@@ -162,7 +179,13 @@ export async function probeEndpoint(options: {
 	const fallbacks = [...candidates, base];
 	for (const url of fallbacks) {
 		if (options.signal?.aborted) break;
-		const res = await tryFetchJson(url, options.apiKey, undefined, options.signal);
+		const res = await tryFetchJson(
+			url,
+			options.apiKey,
+			undefined,
+			options.signal,
+			options.headers,
+		);
 		if (res.status > 0) {
 			return {
 				ok: res.status < 500,

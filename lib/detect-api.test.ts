@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { chatPing } from "./detect-api.ts";
+import { chatPing, listOpenAIModels } from "./detect-api.ts";
 
 interface Call {
 	url: string;
@@ -34,6 +34,27 @@ afterEach(() => {
 });
 
 const openaiReply = { choices: [{ message: { role: "assistant", content: "hi" } }] };
+
+describe("listOpenAIModels", () => {
+	it("applies resolved provider headers and allows case-insensitive removals", async () => {
+		mockFetch(() => ({ status: 200, body: { data: [{ id: "model-a" }] } }));
+
+		const result = await listOpenAIModels({
+			baseUrl: "https://relay.test/v1",
+			apiKey: "default-key",
+			headers: {
+				authorization: null,
+				"x-api-key": "header-key",
+				"x-relay-scope": "models",
+			},
+		});
+
+		assert.deepEqual(result.models, [{ id: "model-a", name: undefined }]);
+		assert.equal(calls[0]!.headers.Authorization, undefined);
+		assert.equal(calls[0]!.headers["x-api-key"], "header-key");
+		assert.equal(calls[0]!.headers["x-relay-scope"], "models");
+	});
+});
 
 describe("chatPing", () => {
 	it("succeeds on a valid openai-completions reply", async () => {

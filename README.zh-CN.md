@@ -10,6 +10,7 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 - API 协议手动四选一，不做猜测：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses、Google Generative AI
 - 可从中转站 `GET /v1/models` 拉取模型列表并多选（与 pi 内置设置列表同款 UI：`→` 光标、`on`/`off`、输入即搜索、Enter/Space 切换）
 - 自动对齐 **pi 官方模型目录**，为选中模型补全 `contextWindow`、`maxTokens`、`reasoning`、`thinkingLevelMap`、`cost` 等元数据；匹配不到则回退默认值（128k 上下文）
+- 可扫描已有中转站后来新增的模型，一键全部添加或多选添加，也可移除已配置的自定义模型（`/provider models`）
 - 支持只改内置供应商的 `baseUrl`（代理模式），无需重建整份配置
 - 内置连通性探测（`/provider test`）
 - 写入的 `models.json` 采用原子写入（临时文件 + rename），并尽量收紧权限到 `0600`
@@ -54,6 +55,7 @@ pi install file:"$(pwd)"
 |------|------|
 | `/provider` | 打开主菜单，列出全部子命令 |
 | `/provider add` | 新增一个自定义供应商 |
+| `/provider models [provider-id]` | 为已有供应商发现、手动添加或移除模型（别名 `add-models`） |
 | `/provider proxy` | 只改内置供应商的 `baseUrl`（中转已有供应商） |
 | `/provider list` | 列出已保存的自定义供应商，选中可查看完整 JSON |
 | `/provider remove` | 删除一个供应商（别名 `rm`） |
@@ -85,6 +87,18 @@ pi install file:"$(pwd)"
    - 国内中转安全默认（关闭 `developer` role）
 7. **Display name**（可选）
 8. 预览即将写入的 JSON，确认后落盘到 `~/.pi/agent/models.json`
+
+### `/provider models`
+
+中转站后来支持了更多模型时使用。执行 `/provider models` 后选择供应商，也可以用 `/provider models my-relay` 直接进入：
+
+1. 选择 **Discover and add new models** 拉取中转站目录、手动输入 model id，或选择 **Remove configured models**
+2. 按 model id 精确比较远端目录和该供应商当前配置
+3. 发现新模型后，可一键全部添加，也可以进入支持搜索的多选列表
+4. 新条目继续从 pi 官方目录补全元数据，写入前显示 `+ model-id` 增量预览
+5. 移除同样使用支持搜索的多选列表，并显示明确的 `- model-id` 二次确认；只删除该供应商 `models` 中的自定义条目
+
+模型发现仍然只增不删：已有模型条目及手动修改过的元数据会原样保留，重复 id 会跳过，本次远端没有返回的模型绝不会自动删除；请求目录时会尽量复用供应商已解析的 API key 与请求头。只有显式选择移除时才会删除条目。每次确认后都会重新读取文件，以保留交互期间产生的其他配置修改。仅覆盖 `baseUrl` 的代理在没有明确 API 协议时不能添加模型，但如果已经存在自定义模型条目，仍然可以移除。
 
 ### `/provider proxy`
 
@@ -150,12 +164,13 @@ pi-provider/
     ├── models-json.ts         # 读写 models.json（兼容 JSONC、原子写入、0600 权限收紧）
     ├── detect-api.ts          # GET /v1/models 探测与连通性测试
     ├── official-catalog.ts    # 从 pi 运行中的模型注册表取官方目录，做 id 匹配与元数据补全
+    ├── model-management.ts    # 计算新增模型并执行显式的模型增删更新
     ├── loop-ui.ts             # 循环滚动 select/editor、向导步骤机、spinner 助手
     ├── checks-panel.ts        # /provider test 使用的 ✓/✗ 实时检查面板
     └── checkbox-select.ts     # 与 pi SettingsList 一致的多选 UI
 ```
 
-运行 `npm test`（Node 22+）执行测试（向导步骤机、chat ping 的 URL/协议逻辑）。
+运行 `npm test`（Node 22+）执行测试（向导步骤机、模型 diff/merge 不变量、chat ping 的 URL/协议逻辑）。
 
 ## 注意事项
 

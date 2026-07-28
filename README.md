@@ -10,6 +10,7 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 - API protocol is always picked manually, never guessed: OpenAI Chat Completions, Anthropic Messages, OpenAI Responses, Google Generative AI
 - Can fetch the model catalog from a relay's `GET /v1/models` and multi-select from it (same UX as pi's built-in settings list: `→` cursor, `on`/`off`, type-to-search, Enter/Space to toggle)
 - Auto-enriches selected models against the **official pi model catalog** — fills in `contextWindow`, `maxTokens`, `reasoning`, `thinkingLevelMap`, `cost`, etc.; falls back to sane defaults (128k context) when no match is found
+- Can scan an existing relay for newly available models, add all or selected additions, and remove configured custom models (`/provider models`)
 - Can proxy a built-in provider by overriding just its `baseUrl`, without touching its model list
 - Built-in connectivity probe (`/provider test`)
 - Writes `models.json` atomically (temp file + rename) with permissions tightened to `0600` where possible
@@ -54,6 +55,7 @@ Inside a pi session (sub-commands support Tab completion):
 |---|---|
 | `/provider` | Open the main menu listing all sub-commands |
 | `/provider add` | Add a new custom provider |
+| `/provider models [provider-id]` | Discover, manually add, or remove models on an existing provider (alias `add-models`) |
 | `/provider proxy` | Override only a built-in provider's `baseUrl` (route it through a relay) |
 | `/provider list` | List saved custom providers; select one to view its full JSON |
 | `/provider remove` | Remove a provider (alias `rm`) |
@@ -85,6 +87,18 @@ Inside a pi session (sub-commands support Tab completion):
    - Chinese-relay safe defaults (disables the `developer` role)
 7. **Display name** (optional)
 8. Previews the JSON about to be written, then saves it to `~/.pi/agent/models.json` on confirmation
+
+### `/provider models`
+
+Use this after a configured relay starts offering more models. Run `/provider models` and pick a provider, or jump straight to one with `/provider models my-relay`:
+
+1. Choose **Discover and add new models** to fetch the relay catalog, enter model ids manually, or choose **Remove configured models**
+2. The fetched catalog is compared exactly by model id with the provider's configured `models`
+3. If new ids are found, either add all of them in one step or open the searchable multi-select list
+4. New entries are enriched from pi's official catalog, then a `+ model-id` diff is shown before writing
+5. Removal also uses a searchable multi-select and shows an explicit `- model-id` confirmation; it only removes entries from that provider's configured `models`
+
+Discovery is additive: existing model entries and hand-edited metadata are preserved exactly, duplicate ids are skipped, and models missing from the latest relay response are never removed automatically. It reuses the provider's resolved API key and request headers when available. Removal happens only when explicitly selected. The file is read again immediately before either write so unrelated edits made while the dialogs were open are retained. `baseUrl`-only proxy overrides cannot add models without an explicit API protocol, but providers that already have custom model entries can still remove them.
 
 ### `/provider proxy`
 
@@ -150,12 +164,13 @@ pi-provider/
     ├── models-json.ts         # read/write models.json (JSONC-tolerant, atomic write, 0600 tightening)
     ├── detect-api.ts          # GET /v1/models discovery and connectivity probing
     ├── official-catalog.ts    # snapshots pi's live model registry catalog, does id matching + enrichment
+    ├── model-management.ts    # computes additions and applies explicit model add/remove updates
     ├── loop-ui.ts             # wrap-around select/editor, wizard step machine, spinner helper
     ├── checks-panel.ts        # live ✓/✗ checklist panel used by /provider test
     └── checkbox-select.ts     # multi-select UI matching pi's SettingsList
 ```
 
-Run the tests (wizard step machine, chat-ping URL/protocol logic) with `npm test` (Node 22+).
+Run the tests (wizard step machine, model diff/merge invariants, chat-ping URL/protocol logic) with `npm test` (Node 22+).
 
 ## Notes
 
