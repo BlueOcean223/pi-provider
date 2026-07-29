@@ -83,3 +83,78 @@ export function removeModelEntries(
 		missingIds: Array.from(targets).filter((id) => !removed.has(id)),
 	};
 }
+
+/** Fields refreshModelEntries may update; id/name/api and unknown keys are preserved. */
+const REFRESHABLE_FIELDS = [
+	"reasoning",
+	"thinkingLevelMap",
+	"input",
+	"contextWindow",
+	"maxTokens",
+	"cost",
+	"compat",
+] as const;
+
+export interface ModelRefreshChange {
+	id: string;
+	field: string;
+	from: unknown;
+	to: unknown;
+}
+
+export interface RefreshModelEntriesResult {
+	models: ModelEntry[];
+	changes: ModelRefreshChange[];
+	/** Configured ids with no official-catalog match (left untouched). */
+	unmatchedIds: string[];
+}
+
+function summarizeValue(value: unknown): string {
+	if (value === undefined) return "—";
+	const json = JSON.stringify(value);
+	return json.length > 60 ? `${json.slice(0, 57)}…` : json;
+}
+
+/** One-line human description of a refresh change for confirmations. */
+export function formatRefreshChange(change: ModelRefreshChange): string {
+	return `${change.id}: ${change.field} ${summarizeValue(change.from)} → ${summarizeValue(change.to)}`;
+}
+
+/**
+ * Re-enrich configured models against the official catalog, updating only
+ * refreshable metadata fields (see REFRESHABLE_FIELDS). Id, name, api and any
+ * unknown/custom keys are preserved, so hand-tuned fields the refresher does
+ * not know about survive. Fields equal in both entries are left alone, and a
+ * field the enriched entry no longer carries (e.g. compat disappeared
+ * upstream) is removed from the configured entry so stale flags do not linger.
+ */
+export function refreshModelEntries(
+	existing: ModelEntry[],
+	enrich: (id: string, name?: string) => ModelEntry | undefined,
+): RefreshModelEntriesResult {
+	const models: ModelEntry[] = [];
+	const changes: ModelRefreshChange[] = [];
+	const unmatchedIds: string[] = [];
+
+	for (const model of existing) {
+		const enriched = enrich(model.id, typeof model.name === "string" ? model.name : undefined);
+		if (!enriched) {
+			unmatchedIds.push(model.id);
+			models.push(model);
+			continue;
+		}
+
+		const next: ModelEntry = { ...model };
+		for (const field of REFRESHABLE_FIELDS) {
+			const from = model[field];
+			const to = enriched[field];
+			if (JSON.stringify(from ?? null) === JSON.stringify(to ?? null)) continue;
+			changes.push({ id: model.id, field, from, to });
+			if (to === undefined) delete next[field];
+			else next[field] = to;
+		}
+		models.push(next);
+	}
+
+	return { models, changes, unmatchedIds };
+}

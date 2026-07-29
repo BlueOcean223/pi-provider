@@ -12,6 +12,7 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 - Auto-enriches selected models against the **official pi model catalog** — fills in `contextWindow`, `maxTokens`, `reasoning`, `thinkingLevelMap`, `cost`, etc.; falls back to sane defaults (128k context) when no match is found
 - Forwards model-level Anthropic `compat` flags (e.g. `forceAdaptiveThinking` for Claude Opus/Sonnet 4.6) so relay copies of those models negotiate thinking the same way as the official endpoint
 - Can scan an existing relay for newly available models, add all or selected additions, and remove configured custom models (`/provider models`)
+- Can re-sync configured models with pi's official catalog (`/provider models` → **Refresh metadata**) — picks up upstream fixes like new `compat` flags without touching ids, custom names, or hand-edited fields
 - Can proxy a built-in provider by overriding just its `baseUrl`, without touching its model list
 - Built-in connectivity probe (`/provider test`)
 - Writes `models.json` atomically (temp file + rename) with permissions tightened to `0600` where possible
@@ -93,13 +94,15 @@ Inside a pi session (sub-commands support Tab completion):
 
 Use this after a configured relay starts offering more models. Run `/provider models` and pick a provider, or jump straight to one with `/provider models my-relay`:
 
-1. Choose **Discover and add new models** to fetch the relay catalog, enter model ids manually, or choose **Remove configured models**
+1. Choose **Discover and add new models** to fetch the relay catalog, enter model ids manually, **Refresh metadata from official catalog**, or choose **Remove configured models**
 2. The fetched catalog is compared exactly by model id with the provider's configured `models`
 3. If new ids are found, either add all of them in one step or open the searchable multi-select list
 4. New entries are enriched from pi's official catalog, then a `+ model-id` diff is shown before writing
 5. Removal also uses a searchable multi-select and shows an explicit `- model-id` confirmation; it only removes entries from that provider's configured `models`
 
 Discovery is additive: existing model entries and hand-edited metadata are preserved exactly, duplicate ids are skipped, and models missing from the latest relay response are never removed automatically. It reuses the provider's resolved API key and request headers when available. Removal happens only when explicitly selected. The file is read again immediately before either write so unrelated edits made while the dialogs were open are retained. `baseUrl`-only proxy overrides cannot add models without an explicit API protocol, but providers that already have custom model entries can still remove them.
+
+**Refresh metadata** re-enriches every configured model against pi's live official catalog and shows a field-level diff (`model: field old → new`) before writing. Only catalog-managed fields are updated (`reasoning`, `thinkingLevelMap`, `input`, `contextWindow`, `maxTokens`, `cost`, `compat`); ids, custom `name`s, `api` overrides and unknown keys are preserved, and models with no official match are kept as-is. Use it to pick up upstream catalog fixes — e.g. models added before `compat` forwarding existed can gain `forceAdaptiveThinking` without re-adding them.
 
 ### `/provider proxy`
 

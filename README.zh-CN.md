@@ -12,6 +12,7 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 - 自动对齐 **pi 官方模型目录**，为选中模型补全 `contextWindow`、`maxTokens`、`reasoning`、`thinkingLevelMap`、`cost` 等元数据；匹配不到则回退默认值（128k 上下文）
 - 转发 Anthropic 模型级 `compat` 标记（如 Claude Opus/Sonnet 4.6 的 `forceAdaptiveThinking`），让中转副本与官方端点以相同方式协商 thinking
 - 可扫描已有中转站后来新增的模型，一键全部添加或多选添加，也可移除已配置的自定义模型（`/provider models`）
+- 可将已配置模型与 pi 官方目录重新对齐（`/provider models` → **Refresh metadata**）——同步上游修复（如新增 `compat` 标记），不影响 id、自定义名称和手动添加的字段
 - 支持只改内置供应商的 `baseUrl`（代理模式），无需重建整份配置
 - 内置连通性探测（`/provider test`）
 - 写入的 `models.json` 采用原子写入（临时文件 + rename），并尽量收紧权限到 `0600`
@@ -93,13 +94,15 @@ pi install file:"$(pwd)"
 
 中转站后来支持了更多模型时使用。执行 `/provider models` 后选择供应商，也可以用 `/provider models my-relay` 直接进入：
 
-1. 选择 **Discover and add new models** 拉取中转站目录、手动输入 model id，或选择 **Remove configured models**
+1. 选择 **Discover and add new models** 拉取中转站目录、手动输入 model id、选择 **Refresh metadata from official catalog** 刷新元数据，或选择 **Remove configured models** 移除模型
 2. 按 model id 精确比较远端目录和该供应商当前配置
 3. 发现新模型后，可一键全部添加，也可以进入支持搜索的多选列表
 4. 新条目继续从 pi 官方目录补全元数据，写入前显示 `+ model-id` 增量预览
 5. 移除同样使用支持搜索的多选列表，并显示明确的 `- model-id` 二次确认；只删除该供应商 `models` 中的自定义条目
 
 模型发现仍然只增不删：已有模型条目及手动修改过的元数据会原样保留，重复 id 会跳过，本次远端没有返回的模型绝不会自动删除；请求目录时会尽量复用供应商已解析的 API key 与请求头。只有显式选择移除时才会删除条目。每次确认后都会重新读取文件，以保留交互期间产生的其他配置修改。仅覆盖 `baseUrl` 的代理在没有明确 API 协议时不能添加模型，但如果已经存在自定义模型条目，仍然可以移除。
+
+**Refresh metadata** 将该供应商下所有已配置模型与 pi 运行的官方目录重新匹配，写入前展示字段级 diff（`model: field 旧值 → 新值`）。只更新目录管理的字段（`reasoning`、`thinkingLevelMap`、`input`、`contextWindow`、`maxTokens`、`cost`、`compat`）；id、自定义 `name`、`api` 和未知字段都会保留，匹配不到官方目录的模型原样保留。适合同步上游目录修复——例如早期添加、缺少 `compat` 转发的 Claude 模型可以借此补上 `forceAdaptiveThinking`，无需重新添加。
 
 ### `/provider proxy`
 

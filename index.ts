@@ -31,7 +31,9 @@ import {
 } from "./lib/loop-ui.ts";
 import {
 	findNewRelayModels,
+	formatRefreshChange,
 	mergeModelAdditions,
+	refreshModelEntries,
 	removeModelEntries,
 } from "./lib/model-management.ts";
 import {
@@ -735,6 +737,93 @@ async function saveModelRemovals(
 	return true;
 }
 
+/**
+ * Re-enrich configured models against the live official catalog. Only
+ * catalog-managed metadata fields change; ids, custom names and unknown keys
+ * are preserved. Shows a field-level diff before writing.
+ */
+async function saveModelRefresh(
+	ctx: ExtensionCommandContext,
+	providerId: string,
+): Promise<boolean> {
+	const { ui } = ctx;
+	const before = readModelsFile();
+	const cfg = before.providers?.[providerId];
+	if (!cfg) {
+		ui.notify(`Provider "${providerId}" no longer exists`, "error");
+		return false;
+	}
+	if (!cfg.models?.length) {
+		ui.notify(`${providerId} has no configured models to refresh`, "info");
+		return false;
+	}
+
+	// Snapshot the catalog with all relay providers excluded so a provider's
+	// own entries can't match against themselves (same rule as the add flow).
+	const relayProviderIds = Object.entries(before.providers ?? {})
+		.filter(([, provider]) => provider.models?.length)
+		.map(([id]) => id);
+	const catalog = catalogFromRegistry(ctx, relayProviderIds);
+	if (catalog.length === 0) {
+		ui.notify("pi model catalog unavailable — nothing to refresh from", "warning");
+		return false;
+	}
+
+	const api = inferProviderApi(cfg);
+	const planned = refreshModelEntries(cfg.models, (id, name) => {
+		const r = enrichModelEntry(catalog, id, api, name);
+		return r.status === "matched" ? r.entry : undefined;
+	});
+
+	if (planned.changes.length === 0) {
+		ui.notify(
+			planned.unmatchedIds.length > 0
+				? `${providerId} is up to date (${planned.unmatchedIds.length} model(s) have no official match: ${planned.unmatchedIds.join(", ")})`
+				: `${providerId} is up to date — all metadata matches the official catalog`,
+			"info",
+		);
+		return false;
+	}
+
+	const preview = planned.changes.map(formatRefreshChange).join("\n");
+	const jsoncNote = modelsFileHasJsonc()
+		? "\n\nNote: // comments and trailing commas in models.json will be removed on save."
+		: "";
+	const choice = await loopSelect(
+		ctx,
+		`Refresh metadata for "${providerId}"?\n\n${preview.slice(0, 1500)}${
+			preview.length > 1500 ? "\n…" : ""
+		}\n\n${planned.changes.length} change(s) across ${new Set(planned.changes.map((c) => c.id)).size} model(s) · ${planned.unmatchedIds.length} unmatched (kept as-is)\nFile: ${getModelsPath()}${jsoncNote}`,
+		["Yes — refresh metadata", "No — back"],
+		{ escLabel: "back" },
+	);
+	if (choice === undefined || choice.startsWith("No")) return false;
+
+	// Re-read before writing so unrelated edits made while the confirmation
+	// dialog was open are preserved.
+	const fresh = readModelsFile();
+	const freshCfg = fresh.providers?.[providerId];
+	if (!freshCfg) {
+		ui.notify(`Provider "${providerId}" no longer exists`, "error");
+		return false;
+	}
+	const merged = refreshModelEntries(freshCfg.models ?? [], (id, name) => {
+		const r = enrichModelEntry(catalog, id, api, name);
+		return r.status === "matched" ? r.entry : undefined;
+	});
+	if (merged.changes.length === 0) {
+		ui.notify(`${providerId} no longer has refreshable metadata changes`, "info");
+		return true;
+	}
+
+	writeModelsFile(upsertProvider(fresh, providerId, { ...freshCfg, models: merged.models }));
+	ui.notify(
+		`Refreshed ${merged.changes.length} field(s) on ${providerId}. Open /model to refresh.`,
+		"info",
+	);
+	return true;
+}
+
 async function manageProviderModels(
 	ctx: ExtensionCommandContext,
 	providerId: string,
@@ -753,7 +842,9 @@ async function manageProviderModels(
 		if (cfg.baseUrl && api) {
 			actions.push("Discover and add new models", "Enter model ids manually");
 		}
-		if (cfg.models?.length) actions.push("Remove configured models");
+		if (cfg.models?.length) {
+			actions.push("Refresh metadata from official catalog", "Remove configured models");
+		}
 		if (actions.length === 0) {
 			ui.notify(
 				`${providerId} has neither removable custom models nor enough configuration to add models`,
@@ -769,6 +860,11 @@ async function manageProviderModels(
 			{ escLabel: "back" },
 		);
 		if (action === undefined) return false;
+
+		if (action.startsWith("Refresh")) {
+			if (await saveModelRefresh(ctx, providerId)) return true;
+			continue;
+		}
 
 		if (action.startsWith("Remove")) {
 			const selected = await pickModelsToRemove(ctx, cfg.models ?? []);
