@@ -38,6 +38,24 @@ describe("enrichModelEntry compat forwarding", () => {
 		assert.ok(!("sendSessionAffinityHeaders" in (r.entry.compat ?? {})));
 	});
 
+	it("does not forward transport flags that default to true in pi-ai", () => {
+		// A gateway-specific deficiency (e.g. copilot's lack of eager tool
+		// streaming) must not leak onto an unrelated relay that supports it;
+		// pi-ai's defaults (true) are the safe choice for conformant relays.
+		const copilotStyle: OfficialModelMeta = {
+			...opus46,
+			compat: {
+				forceAdaptiveThinking: true,
+				supportsEagerToolInputStreaming: false,
+				supportsLongCacheRetention: false,
+				supportsCacheControlOnTools: false,
+				supportsToolReferences: true,
+			},
+		};
+		const r = enrichModelEntry([copilotStyle], "claude-opus-4-6", "anthropic-messages");
+		assert.deepEqual(r.entry.compat, { forceAdaptiveThinking: true });
+	});
+
 	it("marks adaptive-thinking models in the detail hint", () => {
 		const r = enrichModelEntry([opus46], "claude-opus-4-6", "anthropic-messages");
 		assert.match(r.detail, /\(adaptive\)/);
@@ -83,6 +101,12 @@ describe("enrichModelEntry compat forwarding", () => {
 });
 
 describe("matchOfficialModel", () => {
+	const opus45: OfficialModelMeta = {
+		id: "claude-opus-4-5",
+		provider: "anthropic",
+		api: "anthropic-messages",
+	};
+
 	it("does not let a base id absorb a newer version suffix", () => {
 		const sonnet4: OfficialModelMeta = {
 			id: "claude-sonnet-4",
@@ -90,5 +114,47 @@ describe("matchOfficialModel", () => {
 			api: "anthropic-messages",
 		};
 		assert.equal(matchOfficialModel([sonnet4], "claude-sonnet-4-6"), undefined);
+	});
+
+	it("matches dot-version ids (claude-opus-4.6) to dashed official ids", () => {
+		assert.equal(matchOfficialModel([opus46], "claude-opus-4.6")?.id, "claude-opus-4-6");
+		assert.equal(
+			matchOfficialModel([opus46], "anthropic/claude-opus-4.6")?.id,
+			"claude-opus-4-6",
+		);
+	});
+
+	it("matches bedrock-style dotted ids with region prefixes and version suffixes", () => {
+		assert.equal(
+			matchOfficialModel([opus46], "anthropic.claude-opus-4-6")?.id,
+			"claude-opus-4-6",
+		);
+		assert.equal(
+			matchOfficialModel([opus46], "us.anthropic.claude-opus-4-6-v1:0")?.id,
+			"claude-opus-4-6",
+		);
+		assert.equal(
+			matchOfficialModel([opus46], "global.anthropic.claude-opus-4-6")?.id,
+			"claude-opus-4-6",
+		);
+		assert.equal(
+			matchOfficialModel([opus46], "anthropic.claude-opus-4-6-v1")?.id,
+			"claude-opus-4-6",
+		);
+	});
+
+	it("matches dated snapshot suffixes to their base model", () => {
+		assert.equal(
+			matchOfficialModel([opus46], "claude-opus-4-6-20260101")?.id,
+			"claude-opus-4-6",
+		);
+		assert.equal(
+			matchOfficialModel([opus45, opus46], "claude-opus-4-5-20251101")?.id,
+			"claude-opus-4-5",
+		);
+		assert.equal(
+			matchOfficialModel([opus45, opus46], "us.anthropic.claude-opus-4-5-20251101-v1:0")?.id,
+			"claude-opus-4-5",
+		);
 	});
 });

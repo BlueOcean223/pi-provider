@@ -35,25 +35,37 @@ export interface EnrichResult {
 
 /**
  * Anthropic compat flags that describe the *model's* own request/response
- * quirks (e.g. claude-opus-4-6 only supports adaptive `thinking.type=adaptive`,
- * not the legacy budget-based `thinking.type=enabled`). These are safe to copy
- * onto a relay entry because they change how pi talks to that model id
- * regardless of which endpoint serves it.
+ * quirks. These are safe to copy onto a relay entry because they change how
+ * pi talks to that model id regardless of which endpoint serves it:
  *
- * Deliberately excludes gateway/session-routing flags (e.g.
- * sendSessionAffinityHeaders, openRouterRouting) which are specific to the
- * official first-party transport and would be meaningless — or wrong — when
- * sent through an unrelated relay.
+ * - forceAdaptiveThinking: claude-opus/sonnet-4-6+ only supports adaptive
+ *   `thinking.type=adaptive`, not the legacy budget-based `type=enabled`.
+ * - supportsTemperature: opus 4.7+/5 rejects the temperature parameter.
+ * - supportsStrictTools: model accepts `strict: true` tool schemas.
+ * - allowEmptySignature: model tolerates thinking blocks with empty
+ *   signatures (pi would otherwise degrade them to plain text).
+ *
+ * Deliberately excludes transport/gateway flags whose defaults are the safe
+ * choice for a conformant relay:
+ *
+ * - supportsEagerToolInputStreaming / supportsLongCacheRetention /
+ *   supportsCacheControlOnTools default to true in pi-ai. Official models
+ *   never set them, so forwarding could only ever copy a *false* from an
+ *   unrelated gateway (e.g. github-copilot) onto a relay that is perfectly
+ *   capable — while a relay that genuinely rejects cache_control cannot be
+ *   expressed through the official catalog anyway.
+ * - supportsToolReferences defaults to a provider-id check
+ *   (provider === "anthropic"), which is already false for relay providers —
+ *   copying an official `true` would emit tool_reference blocks a relay may
+ *   reject.
+ * - sendSessionAffinityHeaders / openRouterRouting etc. are first-party
+ *   gateway routing concerns, meaningless through an unrelated relay.
  */
 const ANTHROPIC_MODEL_COMPAT_KEYS = [
 	"forceAdaptiveThinking",
-	"supportsEagerToolInputStreaming",
-	"supportsLongCacheRetention",
-	"supportsCacheControlOnTools",
 	"supportsTemperature",
-	"allowEmptySignature",
 	"supportsStrictTools",
-	"supportsToolReferences",
+	"allowEmptySignature",
 ] as const;
 
 /**
@@ -159,6 +171,27 @@ function guessFamily(relayId: string): string | undefined {
 	return undefined;
 }
 
+/**
+ * Extract the model-id-ish tail from namespaced relay ids.
+ * Handles openrouter-style `anthropic/claude-x`, bedrock-style dotted
+ * prefixes (`us.anthropic.claude-x`, `anthropic.claude-x`), and version
+ * suffixes (`-v1:0`). Dots are ambiguous (provider namespaces vs version
+ * separators like `claude-opus-4.6`), so we only strip a dotted prefix when
+ * what follows starts with a known vendor name.
+ */
+function relayIdTail(relayId: string): string {
+	// Strip bedrock-style version suffix first so `-v1:0` doesn't confuse the
+	// path split below (`:` would leave just "0").
+	const noVersion = relayId.replace(/-v\d+(?:[.:]\d+)?$/, "");
+	// openrouter path style: keep everything after the last /
+	const pathTail = noVersion.split("/").pop() ?? noVersion;
+	// bedrock dotted style: [region.]vendor.model-id
+	const dotted = pathTail.match(
+		/^(?:(?:global|us|eu|au|jp|ap|ca|sa|us-gov)\.)?(anthropic|openai|google|meta|mistral|deepseek|cohere|ai21|amazon|xai)\.(.+)$/i,
+	);
+	return dotted?.[2] ?? pathTail;
+}
+
 /** Id similarity without over-matching version suffixes (sonnet-4 ≉ sonnet-4-6). */
 function idSimilarity(relayNorm: string, officialNorm: string): number {
 	if (!relayNorm || !officialNorm) return 0;
@@ -174,6 +207,8 @@ function idSimilarity(relayNorm: string, officialNorm: string): number {
 	}
 	if (relayNorm.startsWith(officialNorm)) {
 		const extra = relayNorm.slice(officialNorm.length);
+		// dated snapshot suffix: -20260101 / 20260101 → strong match
+		if (/^\d{8}$/.test(extra)) return 95;
 		if (/^\d+$/.test(extra)) return 25;
 		return 45;
 	}
@@ -193,9 +228,9 @@ function scoreMatch(
 
 	let score = idSimilarity(r, o);
 
-	// last path segment (openrouter-style anthropic/claude-x)
-	const relayTail = normalizeId(relayId.split(/[/:]/).pop() ?? relayId);
-	const officialTail = normalizeId(official.id.split(/[/:]/).pop() ?? official.id);
+	// last path segment (openrouter-style anthropic/claude-x, bedrock dotted ids)
+	const relayTail = normalizeId(relayIdTail(relayId));
+	const officialTail = normalizeId(relayIdTail(official.id));
 	if (relayTail && officialTail) {
 		const tailSim = idSimilarity(relayTail, officialTail);
 		score = Math.max(score, tailSim);
@@ -250,14 +285,14 @@ export function matchOfficialModel(
 	if (catalog.length === 0) return undefined;
 
 	const r = normalizeId(relayId);
-	const relayTail = normalizeId(relayId.split(/[/:]/).pop() ?? relayId);
+	const relayTail = normalizeId(relayIdTail(relayId));
 
 	let best: OfficialModelMeta | undefined;
 	let bestScore = 0;
 
 	for (const m of catalog) {
 		const o = normalizeId(m.id);
-		const officialTail = normalizeId(m.id.split(/[/:]/).pop() ?? m.id);
+		const officialTail = normalizeId(relayIdTail(m.id));
 		const idScore = Math.max(
 			idSimilarity(r, o),
 			idSimilarity(relayTail, officialTail),
