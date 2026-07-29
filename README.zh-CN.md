@@ -8,7 +8,7 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 
 - 全程问答式交互（选择 / 输入 / 编辑器 / 确认框），不用记参数
 - API 协议手动四选一，不做猜测：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses、Google Generative AI
-- 可从中转站 `GET /v1/models` 拉取模型列表并多选（与 pi 内置设置列表同款 UI：`→` 光标、`on`/`off`、输入即搜索、Enter/Space 切换）
+- 可从中转站 `GET /v1/models` 拉取模型列表并多选（checklist 风格 UI：`[x]`/`[ ]` 行、`→` 光标、输入即搜索，Space 切换、Enter 确认、Esc 取消）
 - 自动对齐 **pi 官方模型目录**，为选中模型补全 `contextWindow`、`maxTokens`、`reasoning`、`thinkingLevelMap`、`cost` 等元数据；匹配不到则回退默认值（128k 上下文）
 - 转发 Anthropic 模型级 `compat` 标记（如 Claude Opus/Sonnet 4.6 的 `forceAdaptiveThinking`），让中转副本与官方端点以相同方式协商 thinking
 - 可扫描已有中转站后来新增的模型，一键全部添加或多选添加，也可移除已配置的自定义模型（`/provider models`）
@@ -171,7 +171,7 @@ pi-provider/
     ├── model-management.ts    # 计算新增模型并执行显式的模型增删更新
     ├── loop-ui.ts             # 循环滚动 select/editor、向导步骤机、spinner 助手
     ├── checks-panel.ts        # /provider test 使用的 ✓/✗ 实时检查面板
-    └── checkbox-select.ts     # 与 pi SettingsList 一致的多选 UI
+    └── checkbox-select.ts     # 基于 pi-tui SettingsList 的 [x]/[ ] checklist 多选
 ```
 
 运行 `npm test`（Node 22+）执行测试（向导步骤机、模型 diff/merge 不变量、chat ping 的 URL/协议逻辑）。

@@ -8,7 +8,7 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 
 - Fully interactive (select / input / editor / confirm prompts) — no flags to remember
 - API protocol is always picked manually, never guessed: OpenAI Chat Completions, Anthropic Messages, OpenAI Responses, Google Generative AI
-- Can fetch the model catalog from a relay's `GET /v1/models` and multi-select from it (same UX as pi's built-in settings list: `→` cursor, `on`/`off`, type-to-search, Enter/Space to toggle)
+- Can fetch the model catalog from a relay's `GET /v1/models` and multi-select from it (checklist UI: `[x]`/`[ ]` rows, `→` cursor, type-to-search, Space toggles, Enter confirms, Esc cancels)
 - Auto-enriches selected models against the **official pi model catalog** — fills in `contextWindow`, `maxTokens`, `reasoning`, `thinkingLevelMap`, `cost`, etc.; falls back to sane defaults (128k context) when no match is found
 - Forwards model-level Anthropic `compat` flags (e.g. `forceAdaptiveThinking` for Claude Opus/Sonnet 4.6) so relay copies of those models negotiate thinking the same way as the official endpoint
 - Can scan an existing relay for newly available models, add all or selected additions, and remove configured custom models (`/provider models`)
@@ -171,7 +171,7 @@ pi-provider/
     ├── model-management.ts    # computes additions and applies explicit model add/remove updates
     ├── loop-ui.ts             # wrap-around select/editor, wizard step machine, spinner helper
     ├── checks-panel.ts        # live ✓/✗ checklist panel used by /provider test
-    └── checkbox-select.ts     # multi-select UI matching pi's SettingsList
+    └── checkbox-select.ts     # [x]/[ ] checklist multi-select built on pi-tui's SettingsList
 ```
 
 Run the tests (wizard step machine, model diff/merge invariants, chat-ping URL/protocol logic) with `npm test` (Node 22+).
