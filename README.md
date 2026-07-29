@@ -10,6 +10,7 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 - API protocol is always picked manually, never guessed: OpenAI Chat Completions, Anthropic Messages, OpenAI Responses, Google Generative AI
 - Can fetch the model catalog from a relay's `GET /v1/models` and multi-select from it (same UX as pi's built-in settings list: `→` cursor, `on`/`off`, type-to-search, Enter/Space to toggle)
 - Auto-enriches selected models against the **official pi model catalog** — fills in `contextWindow`, `maxTokens`, `reasoning`, `thinkingLevelMap`, `cost`, etc.; falls back to sane defaults (128k context) when no match is found
+- Forwards model-level Anthropic `compat` flags (e.g. `forceAdaptiveThinking` for Claude Opus/Sonnet 4.6) so relay copies of those models negotiate thinking the same way as the official endpoint
 - Can scan an existing relay for newly available models, add all or selected additions, and remove configured custom models (`/provider models`)
 - Can proxy a built-in provider by overriding just its `baseUrl`, without touching its model list
 - Built-in connectivity probe (`/provider test`)
@@ -80,7 +81,7 @@ Inside a pi session (sub-commands support Tab completion):
    - Enter model ids manually (comma- or newline-separated; more than one id also opens the multi-select preview)
    - Minimal placeholder (writes `default-model`, to be edited into `models.json` later)
 
-   Every selected model id is matched against the **official pi model catalog** (taken live from pi's model registry, so it works in every install mode — npm, pi-node, bun binary — and reflects pi's remote catalog refreshes): a match copies over the official `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` fields (the `id` itself always stays the relay's own), while a miss falls back to defaults (128k context, non-reasoning, zero cost).
+   Every selected model id is matched against the **official pi model catalog** (taken live from pi's model registry, so it works in every install mode — npm, pi-node, bun binary — and reflects pi's remote catalog refreshes): a match copies over the official `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` fields (the `id` itself always stays the relay's own), while a miss falls back to defaults (128k context, non-reasoning, zero cost). For Anthropic-API models, model-level `compat` flags that describe the model's own request quirks (e.g. `forceAdaptiveThinking`, `supportsStrictTools`) are copied too; gateway/session-routing flags are deliberately left out.
 6. **Compat preset** (only shown for OpenAI-family protocols):
    - None (defaults)
    - Local / strict OpenAI-compat (disables the `developer` role and `reasoning_effort`)

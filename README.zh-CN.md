@@ -10,6 +10,7 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 - API 协议手动四选一，不做猜测：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses、Google Generative AI
 - 可从中转站 `GET /v1/models` 拉取模型列表并多选（与 pi 内置设置列表同款 UI：`→` 光标、`on`/`off`、输入即搜索、Enter/Space 切换）
 - 自动对齐 **pi 官方模型目录**，为选中模型补全 `contextWindow`、`maxTokens`、`reasoning`、`thinkingLevelMap`、`cost` 等元数据；匹配不到则回退默认值（128k 上下文）
+- 转发 Anthropic 模型级 `compat` 标记（如 Claude Opus/Sonnet 4.6 的 `forceAdaptiveThinking`），让中转副本与官方端点以相同方式协商 thinking
 - 可扫描已有中转站后来新增的模型，一键全部添加或多选添加，也可移除已配置的自定义模型（`/provider models`）
 - 支持只改内置供应商的 `baseUrl`（代理模式），无需重建整份配置
 - 内置连通性探测（`/provider test`）
@@ -80,7 +81,7 @@ pi install file:"$(pwd)"
    - 手动输入 model id（逗号或换行分隔；输入多个时同样会进入多选预览）
    - 留空占位（写入 `default-model`，之后手动编辑 `models.json`）
 
-   每个选中的 model id 都会尝试匹配 **pi 官方模型目录**（直接取自 pi 运行中的模型注册表，因此 npm / pi-node / bun 二进制等各种安装方式都能用，且包含 pi 的远程目录刷新结果）：匹配到则复制官方的 `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` 等字段（`id` 仍然用中转站自己的），匹配不到则用默认值（128k 上下文、非 reasoning、零成本）。
+   每个选中的 model id 都会尝试匹配 **pi 官方模型目录**（直接取自 pi 运行中的模型注册表，因此 npm / pi-node / bun 二进制等各种安装方式都能用，且包含 pi 的远程目录刷新结果）：匹配到则复制官方的 `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` 等字段（`id` 仍然用中转站自己的），匹配不到则用默认值（128k 上下文、非 reasoning、零成本）。对于 Anthropic 协议的模型，描述模型自身请求特性的 `compat` 标记（如 `forceAdaptiveThinking`、`supportsStrictTools`）也会一并复制；网关/会话路由类标记则有意不复制。
 6. **Compat preset**（仅 OpenAI 系协议出现）：
    - 无（默认）
    - Local / strict OpenAI-compat（关闭 `developer` role 与 `reasoning_effort`）

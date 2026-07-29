@@ -33,6 +33,48 @@ export interface EnrichResult {
 	detail: string;
 }
 
+/**
+ * Anthropic compat flags that describe the *model's* own request/response
+ * quirks (e.g. claude-opus-4-6 only supports adaptive `thinking.type=adaptive`,
+ * not the legacy budget-based `thinking.type=enabled`). These are safe to copy
+ * onto a relay entry because they change how pi talks to that model id
+ * regardless of which endpoint serves it.
+ *
+ * Deliberately excludes gateway/session-routing flags (e.g.
+ * sendSessionAffinityHeaders, openRouterRouting) which are specific to the
+ * official first-party transport and would be meaningless — or wrong — when
+ * sent through an unrelated relay.
+ */
+const ANTHROPIC_MODEL_COMPAT_KEYS = [
+	"forceAdaptiveThinking",
+	"supportsEagerToolInputStreaming",
+	"supportsLongCacheRetention",
+	"supportsCacheControlOnTools",
+	"supportsTemperature",
+	"allowEmptySignature",
+	"supportsStrictTools",
+	"supportsToolReferences",
+] as const;
+
+/**
+ * Pick the subset of official `compat` worth forwarding to a relay copy of a
+ * model. Only anthropic-messages models carry flags we trust today (see
+ * ANTHROPIC_MODEL_COMPAT_KEYS); other APIs keep the previous behaviour of not
+ * copying compat at all, since their flags (e.g. supportsDeveloperRole) are
+ * already surfaced through the wizard's own compat-preset step and mixing
+ * the two would be confusing.
+ */
+function filterRelayCompat(
+	official: OfficialModelMeta,
+): Record<string, unknown> | undefined {
+	if (official.api !== "anthropic-messages" || !official.compat) return undefined;
+	const out: Record<string, unknown> = {};
+	for (const key of ANTHROPIC_MODEL_COMPAT_KEYS) {
+		if (key in official.compat) out[key] = official.compat[key];
+	}
+	return Object.keys(out).length > 0 ? out : undefined;
+}
+
 const LOW_PRIORITY_PROVIDERS = new Set([
 	"openrouter",
 	"cloudflare-ai-gateway",
@@ -266,7 +308,11 @@ export function enrichModelEntry(
 		};
 	}
 
-	// Do not copy official compat onto relay models (see STRIP_COMPAT_KEYS).
+	// Copy only the compat flags that describe the model itself (see
+	// filterRelayCompat) — e.g. claude-opus-4-6 requires forceAdaptiveThinking
+	// so pi sends thinking.type=adaptive instead of the deprecated
+	// thinking.type=enabled, regardless of which relay serves it.
+	const relayCompat = filterRelayCompat(official);
 	const entry: ModelEntry = {
 		id: relayId, // always the id the relay expects
 		name: official.name ?? relayName ?? relayId,
@@ -284,13 +330,14 @@ export function enrichModelEntry(
 				}
 			: { ...DEFAULT_META.cost },
 		...(official.thinkingLevelMap ? { thinkingLevelMap: official.thinkingLevelMap } : {}),
+		...(relayCompat ? { compat: relayCompat } : {}),
 	};
 
 	const thinkHint = official.thinkingLevelMap
 		? `think:${Object.entries(official.thinkingLevelMap)
 				.filter(([, v]) => v !== null)
 				.map(([k]) => k)
-				.join(",") || "map"}`
+				.join(",") || "map"}${relayCompat?.forceAdaptiveThinking ? " (adaptive)" : ""}`
 		: official.reasoning
 			? "reasoning"
 			: "no-think";
