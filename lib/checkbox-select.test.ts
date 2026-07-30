@@ -65,12 +65,12 @@ describe("MultiSelectList key semantics", () => {
 		assert.deepEqual(events, [{ type: "cancel" }]);
 	});
 
-	it("Space after a non-empty search query widens the filter instead of toggling", () => {
+	it("Space after a non-empty search query toggles the focused row (not the query)", () => {
 		const { list, items, events } = makeList(["a"], new Set());
 		list.handleInput("a"); // query is now "a"
-		list.handleInput(" "); // literal space in the query — must not toggle
-		assert.equal(items[0]!.currentValue, "off");
-		assert.deepEqual(events, []);
+		list.handleInput(" "); // toggles the match, does not become "aa"
+		assert.equal(items[0]!.currentValue, "on");
+		assert.deepEqual(events, [{ type: "change", id: "a", value: "on" }]);
 	});
 
 	it("Space on an empty query toggles the focused row", () => {

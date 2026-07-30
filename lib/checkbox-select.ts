@@ -40,7 +40,6 @@ interface SettingsListInternals {
 		getValue: () => string;
 		render: (width: number) => string[];
 	};
-	applyFilter(query: string): void;
 }
 
 /**
@@ -87,21 +86,6 @@ export class MultiSelectList extends SettingsList {
 		// Enter = confirm the current on-set, even mid-search.
 		if (this.kb.matches(data, "tui.select.confirm")) {
 			this.onConfirm();
-			return;
-		}
-		if (data === " ") {
-			// Space after a search query filters on literals like "gpt 4o"
-			// (the base class strips spaces from the query); with an empty
-			// query it toggles the focused row.
-			if (internals.searchEnabled && internals.searchInput) {
-				const query = internals.searchInput.getValue();
-				if (query.length > 0) {
-					internals.searchInput.handleInput(query + " ");
-					internals.applyFilter(internals.searchInput.getValue());
-					return;
-				}
-			}
-			super.handleInput(data); // base class toggles on " "
 			return;
 		}
 		super.handleInput(data);
