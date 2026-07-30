@@ -5,9 +5,10 @@ import { Container, getKeybindings, Spacer, Text, type TUI } from "@earendil-wor
 /**
  * Live checklist panel for /provider test.
  *
- * All checks start concurrently; each row shows a spinner while in flight and
- * settles to ✓ / ✗ in place. Esc aborts the underlying requests. The panel is
- * a ui.custom component, so closing it leaves nothing behind in the chat log
+ * Checks start immediately or wait for a configured concurrency slot; each row
+ * shows queued/running state and settles to ✓ / ✗ in place. Esc aborts the
+ * underlying requests. The panel is a ui.custom component, so closing it leaves
+ * nothing behind in the chat log
  * (unlike the old notify("Probing…") + confirm("Probe result") flow).
  */
 
@@ -34,9 +35,15 @@ export interface ChecksPanelOptions {
 	/** Warning lines shown under the title (e.g. "env key not set"). */
 	notes?: string[];
 	checks: PanelCheck[];
+	/**
+	 * Max checks in flight at once (default: all of them). Testing every model of
+	 * a relay would otherwise fire dozens of chat requests simultaneously, which
+	 * relays answer with 429s that look like real failures.
+	 */
+	concurrency?: number;
 }
 
-type RowStatus = "running" | "ok" | "fail" | "skip";
+type RowStatus = "queued" | "running" | "ok" | "fail" | "skip";
 
 interface Row {
 	status: RowStatus;
@@ -46,11 +53,13 @@ interface Row {
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const SPINNER_INTERVAL_MS = 80;
 
-class ChecksPanel extends Container {
+/** Exported for tests; use runChecksPanel() to show it. */
+export class ChecksPanel extends Container {
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly checks: PanelCheck[];
 	private readonly finish: () => void;
+	private readonly concurrency: number;
 	private readonly listContainer = new Container();
 	private readonly statusText = new Text("", 1, 0);
 	private rows: Row[] = [];
@@ -58,6 +67,9 @@ class ChecksPanel extends Container {
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private abort = new AbortController();
 	private pending = 0;
+	/** Indexes of checks waiting for a concurrency slot. */
+	private queue: number[] = [];
+	private active = 0;
 	// Guards against results of an aborted run landing after "r" restarted it.
 	private generation = 0;
 
@@ -67,6 +79,7 @@ class ChecksPanel extends Container {
 		this.theme = theme;
 		this.checks = options.checks;
 		this.finish = finish;
+		this.concurrency = Math.max(1, options.concurrency ?? Number.POSITIVE_INFINITY);
 
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
@@ -95,21 +108,11 @@ class ChecksPanel extends Container {
 		this.generation++;
 		const gen = this.generation;
 		this.abort = new AbortController();
-		this.rows = this.checks.map((c): Row => ({ status: c.run ? "running" : "skip" }));
-		this.pending = this.checks.filter((c) => c.run).length;
-
-		for (let i = 0; i < this.checks.length; i++) {
-			const run = this.checks[i]!.run;
-			if (!run) continue;
-			run(this.abort.signal).then(
-				(result) => this.settle(gen, i, { status: result.ok ? "ok" : "fail", result }),
-				(err: unknown) =>
-					this.settle(gen, i, {
-						status: "fail",
-						result: { ok: false, detail: err instanceof Error ? err.message : String(err) },
-					}),
-			);
-		}
+		this.rows = this.checks.map((c): Row => ({ status: c.run ? "queued" : "skip" }));
+		this.queue = this.checks.flatMap((c, i) => (c.run ? [i] : []));
+		this.pending = this.queue.length;
+		this.active = 0;
+		this.pump(gen);
 
 		if (!this.finished && this.timer === null) {
 			this.timer = setInterval(() => {
@@ -120,10 +123,41 @@ class ChecksPanel extends Container {
 		this.refresh();
 	}
 
+	/** Start queued checks while a concurrency slot is free (all of them by default). */
+	private pump(gen: number): void {
+		if (gen !== this.generation) return;
+		while (this.active < this.concurrency) {
+			const index = this.queue.shift();
+			if (index === undefined) return;
+			const run = this.checks[index]!.run;
+			if (!run) continue;
+			this.active++;
+			this.rows[index] = { status: "running" };
+			const fail = (err: unknown) =>
+				this.settle(gen, index, {
+					status: "fail",
+					result: { ok: false, detail: err instanceof Error ? err.message : String(err) },
+				});
+			// try/catch as well as a rejection handler: a check that throws
+			// synchronously must fail its own row (and free its slot) rather than
+			// escape as an unhandled rejection from the settle that started it.
+			try {
+				run(this.abort.signal).then(
+					(result) => this.settle(gen, index, { status: result.ok ? "ok" : "fail", result }),
+					fail,
+				);
+			} catch (err) {
+				fail(err);
+			}
+		}
+	}
+
 	private settle(gen: number, index: number, row: Row): void {
 		if (gen !== this.generation) return;
 		this.rows[index] = row;
 		this.pending--;
+		this.active--;
+		this.pump(gen);
 		if (this.finished) this.stopTimer();
 		this.refresh();
 	}
@@ -160,7 +194,12 @@ class ChecksPanel extends Container {
 				`${summary}\n${rawKeyHint("enter/esc", "close")}  ${rawKeyHint("r", "run again")}`,
 			);
 		} else {
-			this.statusText.setText(keyHint("tui.select.cancel", "cancel"));
+			// Progress matters once a run covers more than a check or two (e.g.
+			// every model of a relay), and the queue makes "done" ≠ "started".
+			const total = this.rows.filter((r) => r.status !== "skip").length;
+			const done = this.rows.filter((r) => r.status === "ok" || r.status === "fail").length;
+			const progress = total > 1 ? `${t.fg("muted", `${done}/${total} done`)}  ` : "";
+			this.statusText.setText(`${progress}${keyHint("tui.select.cancel", "cancel")}`);
 		}
 		this.tui.requestRender();
 	}
@@ -168,6 +207,8 @@ class ChecksPanel extends Container {
 	private renderRow(check: PanelCheck, row: Row): string {
 		const t = this.theme;
 		switch (row.status) {
+			case "queued":
+				return t.fg("dim", `○ ${check.label} — queued`);
 			case "running": {
 				const spin = t.fg("accent", SPINNER_FRAMES[this.frame]!);
 				const doing = check.runningDetail ? ` — ${check.runningDetail}` : "";
@@ -200,18 +241,22 @@ class ChecksPanel extends Container {
 		}
 	}
 
-	private close(): void {
-		// Bump generation so late rejections from the aborted requests can't
-		// settle rows / request renders after the panel is gone.
+	private cancelRun(): void {
+		// Invalidate callbacks before aborting: abort-triggered rejections settle
+		// asynchronously and must not start queued work after teardown.
 		this.generation++;
+		this.queue = [];
 		this.abort.abort();
 		this.stopTimer();
+	}
+
+	private close(): void {
+		this.cancelRun();
 		this.finish();
 	}
 
 	dispose(): void {
-		this.stopTimer();
-		this.abort.abort();
+		this.cancelRun();
 	}
 }
 

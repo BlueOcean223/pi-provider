@@ -14,7 +14,7 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 - 可扫描已有中转站后来新增的模型，一键全部添加或多选添加，也可移除已配置的自定义模型（`/provider models`）
 - 可将已配置模型与 pi 官方目录重新对齐（`/provider models` → **Refresh metadata**）——同步上游修复（如新增 `compat` 标记），不影响 id、自定义名称和手动添加的字段
 - 支持只改内置供应商的 `baseUrl`（代理模式），无需重建整份配置
-- 内置连通性探测（`/provider test`）
+- 内置连通性探测，chat 测试可多选模型，也可一键测完该供应商全部模型（`/provider test`）
 - 写入的 `models.json` 采用原子写入（临时文件 + rename），并尽量收紧权限到 `0600`
 - 无生产依赖：`@earendil-works/pi-coding-agent`、`@earendil-works/pi-tui` 由 pi 运行时提供，装好 pi 即可用
 
@@ -61,7 +61,7 @@ pi install file:"$(pwd)"
 | `/provider proxy` | 只改内置供应商的 `baseUrl`（中转已有供应商） |
 | `/provider list` | 列出已保存的自定义供应商，选中可查看完整 JSON |
 | `/provider remove` | 删除一个供应商（别名 `rm`） |
-| `/provider test` | 探测供应商端点连通性（别名 `probe`） |
+| `/provider test` | 探测供应商端点连通性，并对所选（或全部）模型做 chat 测试（别名 `probe`） |
 | `/provider path` | 查看 `models.json` 的路径与内容预览 |
 
 ### `/provider add` 交互流程
@@ -115,10 +115,12 @@ pi install file:"$(pwd)"
 
 ### `/provider test`
 
-选择一个已保存的供应商（配置了多个模型时再选一个模型），两项检查会在同一个实时面板里并发进行——spinner 原地变成 ✓/✗，Esc 可中断请求，关闭面板后聊天记录中不留任何痕迹：
+选择一个已保存的供应商，再决定 chat 测试覆盖哪些模型：**Test all N models** 一次测全部，或 **Select models to test** 打开可搜索的多选清单（`[x]`/`[ ]`，Space 勾选、Enter 确认）。只配置了一个模型时不再多问。随后所有检查会在同一个实时面板里并发进行——spinner 原地变成 ✓/✗，Esc 可中断请求，关闭面板后聊天记录中不留任何痕迹：
 
 - **Catalog 探测**——尝试模型 catalog 端点，能列出模型即视为健康；拿不到列表则回退成普通 HTTP 请求按状态码判断
-- **Chat 测试**——用该供应商配置的协议真实发送一条最小的 `"hi"` 请求，与中转站面板（one-api / new-api）测试渠道的方式一致；仅 baseUrl 代理或没有自定义模型的供应商会跳过
+- **Chat 测试（模型 id）**——每个被选中的模型一行：用该供应商配置的协议真实发送一条最小的 `"hi"` 请求，与中转站面板（one-api / new-api）测试渠道的方式一致；仅 baseUrl 代理或没有自定义模型的供应商会跳过
+
+测试多个模型时，同时最多只发 4 个 chat 请求（几十个请求一起打过去，中转站只会回 429，看着像真的失败）——排队中的行显示为 `○ … queued`，面板会按 `done/total` 计数。失败的行保留请求 URL 与 HTTP 状态码以便诊断；成功的多模型行省略这些细节，让面板保持紧凑。
 
 若 `apiKey` 是 `$ENV_VAR` 引用但对应环境变量未设置（或是 `!command` 形式——这里不会执行命令），面板内会标注并以无鉴权方式测试。面板内按 `r` 可重新运行检查。
 
@@ -174,7 +176,7 @@ pi-provider/
     └── checkbox-select.ts     # 基于 pi-tui SettingsList 的 [x]/[ ] checklist 多选
 ```
 
-运行 `npm test`（Node 22+）执行测试（向导步骤机、模型 diff/merge 不变量、chat ping 的 URL/协议逻辑）。
+运行 `npm test`（Node 22+）执行测试（向导步骤机、模型 diff/merge 不变量、chat ping 的 URL/协议逻辑、checklist 按键语义、检查面板的排队并发，以及 `/provider models`、`/provider test` 两条完整流程）。
 
 ## 注意事项
 

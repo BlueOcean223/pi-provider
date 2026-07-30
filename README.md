@@ -14,7 +14,7 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 - Can scan an existing relay for newly available models, add all or selected additions, and remove configured custom models (`/provider models`)
 - Can re-sync configured models with pi's official catalog (`/provider models` → **Refresh metadata**) — picks up upstream fixes like new `compat` flags without touching ids, custom names, or hand-edited fields
 - Can proxy a built-in provider by overriding just its `baseUrl`, without touching its model list
-- Built-in connectivity probe (`/provider test`)
+- Built-in connectivity probe with per-model chat tests — check one model, a multi-selected subset, or every configured model in one panel (`/provider test`)
 - Writes `models.json` atomically (temp file + rename) with permissions tightened to `0600` where possible
 - No runtime dependencies of its own: `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` are provided by your pi install
 
@@ -61,7 +61,7 @@ Inside a pi session (sub-commands support Tab completion):
 | `/provider proxy` | Override only a built-in provider's `baseUrl` (route it through a relay) |
 | `/provider list` | List saved custom providers; select one to view its full JSON |
 | `/provider remove` | Remove a provider (alias `rm`) |
-| `/provider test` | Probe a provider endpoint's connectivity (alias `probe`) |
+| `/provider test` | Probe a provider endpoint's connectivity and chat-test selected (or all) models (alias `probe`) |
 | `/provider path` | Show the `models.json` path and a content preview |
 
 ### `/provider add` walkthrough
@@ -115,10 +115,12 @@ Use this when you just want a **built-in** provider (`anthropic`, `openai`, `goo
 
 ### `/provider test`
 
-Pick a saved provider (and a model, when several are configured) and both checks run live in one panel — spinners settle into ✓/✗ in place, Esc aborts the in-flight requests, and closing the panel leaves nothing behind in the chat log:
+Pick a saved provider, then choose which models the chat test covers — **Test all N models** in one run, or **Select models to test** to open the searchable multi-select checklist (`[x]`/`[ ]`, Space toggles, Enter confirms). A provider with a single configured model skips that question. All checks then run live in one panel — spinners settle into ✓/✗ in place, Esc aborts the in-flight requests, and closing the panel leaves nothing behind in the chat log:
 
 - **Catalog probe** — tries the model-catalog endpoint (listing any models counts as healthy), falling back to a plain HTTP request judged by status code
-- **Chat test** — a real minimal `"hi"` request through the provider's configured protocol, the same way relay panels (one-api / new-api) test channels; skipped for baseUrl-only proxies and providers without custom models
+- **Chat test (model-id)** — one row per selected model: a real minimal `"hi"` request through the provider's configured protocol, the same way relay panels (one-api / new-api) test channels; skipped for baseUrl-only proxies and providers without custom models
+
+When several models are tested, at most 4 chat requests are in flight at a time (a burst of dozens comes back as 429s that look like real failures) — waiting rows show as `○ … queued` and the panel counts `done/total`. Failing rows keep their request URL and HTTP status for diagnosis; passing multi-model rows omit those details to keep the panel compact.
 
 If `apiKey` is a `$ENV_VAR` reference that isn't set (or a `!command`, which is never executed here), the panel notes it and tests without auth. Press `r` inside the panel to run the checks again.
 
@@ -174,7 +176,7 @@ pi-provider/
     └── checkbox-select.ts     # [x]/[ ] checklist multi-select built on pi-tui's SettingsList
 ```
 
-Run the tests (wizard step machine, model diff/merge invariants, chat-ping URL/protocol logic) with `npm test` (Node 22+).
+Run the tests (wizard step machine, model diff/merge invariants, chat-ping URL/protocol logic, checklist key semantics, test-panel queueing, and the `/provider models` + `/provider test` flows end to end) with `npm test` (Node 22+).
 
 ## Notes
 

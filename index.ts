@@ -18,7 +18,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { checkboxSelect } from "./lib/checkbox-select.ts";
+import { type CheckboxItem, checkboxSelect } from "./lib/checkbox-select.ts";
 import { type PanelCheck, runChecksPanel } from "./lib/checks-panel.ts";
 import { chatPing, listOpenAIModels, probeEndpoint } from "./lib/detect-api.ts";
 import {
@@ -243,13 +243,10 @@ async function enterModelsManually(
 	);
 }
 
-async function pickModelsToRemove(
-	ctx: ExtensionCommandContext,
-	models: ModelEntry[],
-): Promise<string[] | null> {
-	const { ui } = ctx;
+/** Checklist rows for a provider's configured models (deduped by id). */
+function configuredModelItems(models: ModelEntry[]): CheckboxItem[] {
 	const seen = new Set<string>();
-	const items = models.flatMap((model) => {
+	return models.flatMap((model) => {
 		if (seen.has(model.id)) return [];
 		seen.add(model.id);
 		const think = model.thinkingLevelMap
@@ -267,6 +264,14 @@ async function pickModelsToRemove(
 			},
 		];
 	});
+}
+
+async function pickModelsToRemove(
+	ctx: ExtensionCommandContext,
+	models: ModelEntry[],
+): Promise<string[] | null> {
+	const { ui } = ctx;
+	const items = configuredModelItems(models);
 
 	const selected = await checkboxSelect(
 		ctx,
@@ -1179,6 +1184,47 @@ async function cmdRemove(ctx: ExtensionCommandContext): Promise<void> {
 	}
 }
 
+/**
+ * Which configured models the chat test should cover: all of them in one go, or
+ * a checklist pick. Returns null when the user backs out (Esc in the checklist
+ * returns to this menu, Esc here goes back to the provider list).
+ */
+async function pickModelsToTest(
+	ctx: ExtensionCommandContext,
+	models: ModelEntry[],
+): Promise<string[] | null> {
+	const { ui } = ctx;
+	const items = configuredModelItems(models);
+	const ids = items.map((item) => item.id);
+	// Nothing to choose between — 0 models is reported as a skipped check.
+	if (ids.length <= 1) return ids;
+
+	while (true) {
+		const mode = await loopSelect(
+			ctx,
+			`Models for the chat test (${ids.length} configured)`,
+			[`Test all ${ids.length} models`, "Select models to test", "Back"],
+			{ escLabel: "back" },
+		);
+		if (mode === undefined || mode === "Back") return null;
+		if (mode.startsWith("Test all")) return ids;
+
+		const selected = await checkboxSelect(ctx, `Select models to test (${ids.length} configured)`, items);
+		if (selected === undefined) continue; // back to the mode menu
+		if (selected.length === 0) {
+			ui.notify("No models selected", "warning");
+			continue;
+		}
+		return selected;
+	}
+}
+
+/**
+ * Chat requests fan out one per model. Relays answer a burst of dozens with
+ * 429s, which would show up as fake failures, so the panel runs them in batches.
+ */
+const MAX_CONCURRENT_CHAT_TESTS = 4;
+
 async function cmdTest(ctx: ExtensionCommandContext): Promise<void> {
 	const { ui } = ctx;
 	// Loop: closing a test panel returns to the provider list (Esc leaves).
@@ -1212,17 +1258,11 @@ async function cmdTest(ctx: ExtensionCommandContext): Promise<void> {
 		}
 
 		const api = cfg.api;
-		const modelIds = (cfg.models ?? []).map((m) => m.id);
-		let chatModel = modelIds[0];
-		if (api && modelIds.length > 1) {
-			const pickedModel = await loopSelect(
-				ctx,
-				`Model for the chat test (${modelIds.length} configured)`,
-				modelIds,
-				{ escLabel: "back" },
-			);
-			if (pickedModel === undefined) continue; // back to the provider list
-			chatModel = pickedModel;
+		let chatModels: string[] = [];
+		if (api) {
+			const pickedModels = await pickModelsToTest(ctx, cfg.models ?? []);
+			if (pickedModels === null) continue; // back to the provider list
+			chatModels = pickedModels;
 		}
 
 		// Catalog probe only proves the gateway answers; the real chat request is
@@ -1247,29 +1287,41 @@ async function cmdTest(ctx: ExtensionCommandContext): Promise<void> {
 				label: "Chat test",
 				skipReason: "baseUrl-only proxy — chat goes through the builtin provider",
 			});
-		} else if (!chatModel) {
+		} else if (chatModels.length === 0) {
 			checks.push({ label: "Chat test", skipReason: "provider has no custom models" });
 		} else {
-			const model = chatModel;
-			checks.push({
-				label: `Chat test (${model})`,
-				runningDetail: `sending "hi" via ${api}`,
-				run: async (signal) => {
-					const ping = await chatPing({ baseUrl, api, model, apiKey: probeKey, signal });
-					return {
-						ok: ping.ok,
-						detail: ping.ok ? 'sent "hi", got a reply' : ping.detail,
-						sub: [ping.status ? `${ping.url} · HTTP ${ping.status}` : ping.url],
-					};
-				},
-			});
+			const single = chatModels.length === 1;
+			for (const model of chatModels) {
+				checks.push({
+					label: `Chat test (${model})`,
+					// The protocol is in the subtitle; repeating it on every row of a
+					// multi-model run just makes long-id rows wrap.
+					runningDetail: single ? `sending "hi" via ${api}` : 'sending "hi"',
+					run: async (signal) => {
+						const ping = await chatPing({ baseUrl, api, model, apiKey: probeKey, signal });
+						return {
+							ok: ping.ok,
+							detail: ping.ok ? 'sent "hi", got a reply' : ping.detail,
+							// Keep successful multi-model rows compact; failures retain the
+							// request URL and status because those details aid diagnosis.
+							sub:
+								ping.ok && !single
+									? undefined
+									: [ping.status ? `${ping.url} · HTTP ${ping.status}` : ping.url],
+						};
+					},
+				});
+			}
 		}
 
 		await runChecksPanel(ctx, {
 			title: `Test provider: ${id}`,
-			subtitle: `${baseUrl} · ${api ?? "builtin protocol"}`,
+			subtitle: `${baseUrl} · ${api ?? "builtin protocol"}${
+				chatModels.length > 1 ? ` · ${chatModels.length} models` : ""
+			}`,
 			notes,
 			checks,
+			concurrency: chatModels.length > 1 ? MAX_CONCURRENT_CHAT_TESTS : undefined,
 		});
 	}
 }
