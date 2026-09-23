@@ -8,7 +8,8 @@ import { Container, getKeybindings, Spacer, Text, truncateToWidth, type TUI, vis
  *
  * Rows come in two shapes that can be mixed:
  * - settings rows (`value`): `Label      value`, value column aligned
- * - list rows (`detail`): `id  dim detail  badge`, detail column aligned
+ * - list rows (`detail`): `id  dim detail  badge`, detail column aligned; on
+ *   a narrow terminal the detail shortens first so the badge stays readable
  *
  * Headings and separators structure the list and are skipped by the cursor.
  * Single-letter shortcut keys act on the focused row (e.g. `t` = test), and the
@@ -78,6 +79,8 @@ function selectable(entry: MenuEntry): entry is MenuRow {
 
 const MAX_VALUE_LABEL = 18;
 const MAX_DETAIL_LABEL = 24;
+/** Below this many columns a shortened detail says nothing; drop it instead. */
+const MIN_DETAIL_WIDTH = 12;
 
 /** Exported for tests; use rowMenu() to show it. */
 export class RowMenu extends Container {
@@ -164,7 +167,7 @@ export class RowMenu extends Container {
 		this.tui.requestRender();
 	}
 
-	private renderEntry(entry: MenuEntry, focused: boolean, valueWidth: number, detailWidth: number): string {
+	private renderEntry(entry: MenuEntry, focused: boolean, valueWidth: number, detailWidth: number): string | RowParts {
 		const t = this.theme;
 		if ("separator" in entry) return "";
 		if ("heading" in entry) return `  ${t.fg("muted", t.bold(entry.heading))}`;
@@ -185,9 +188,11 @@ export class RowMenu extends Container {
 		}
 		if (entry.detail !== undefined || entry.badge) {
 			const label = t.fg(labelColor, pad(entry.label, detailWidth));
-			const detail = entry.detail ? `  ${t.fg("dim", entry.detail)}` : "";
-			const badge = entry.badge ? `  ${t.fg(entry.badge.tone, entry.badge.text)}` : "";
-			return `${prefix}${label}${detail}${badge}`;
+			return {
+				head: `${prefix}${label}`,
+				detail: entry.detail ? `  ${t.fg("dim", entry.detail)}` : "",
+				tail: entry.badge ? `  ${t.fg(entry.badge.tone, entry.badge.text)}` : "",
+			};
 		}
 		return `${prefix}${t.fg(labelColor, entry.label)}`;
 	}
@@ -246,16 +251,31 @@ export class RowMenu extends Container {
 	}
 }
 
-/** One pre-rendered line, truncated to the terminal width. */
-class RowLine {
-	private readonly text: string;
+/** A list row split so the parts that matter survive a narrow terminal. */
+interface RowParts {
+	/** Cursor and label. */
+	head: string;
+	/** Dim detail: shortened first, dropped when too little is left. */
+	detail: string;
+	/** Badge (e.g. the last test result): kept whole while it fits. */
+	tail: string;
+}
 
-	constructor(text: string) {
-		this.text = text;
+/** One pre-rendered line, fitted to the terminal width. */
+class RowLine {
+	private readonly line: string | RowParts;
+
+	constructor(line: string | RowParts) {
+		this.line = line;
 	}
 
 	render(width: number): string[] {
-		return [truncateToWidth(` ${this.text}`, width)];
+		if (typeof this.line === "string") return [truncateToWidth(` ${this.line}`, width)];
+		const { head, detail, tail } = this.line;
+		const room = width - 1 - visibleWidth(head) - visibleWidth(tail);
+		if (visibleWidth(detail) <= room) return [` ${head}${detail}${tail}`];
+		const fitted = room >= MIN_DETAIL_WIDTH ? truncateToWidth(detail, room, "…") : "";
+		return [truncateToWidth(` ${head}${fitted}${tail}`, width)];
 	}
 
 	invalidate(): void {}

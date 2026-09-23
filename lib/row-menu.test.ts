@@ -35,6 +35,24 @@ function open(options: Partial<RowMenuOptions>) {
 }
 
 describe("RowMenu", () => {
+	it("shortens the detail before the badge when a row is too wide", () => {
+		const row = {
+			id: "p",
+			label: "claude-relay",
+			detail: "claude.example-relay.com · anthropic-messages · 2 models",
+			badge: { text: "✓ 2/2 · 1.2s · 5m ago", tone: "success" as const },
+		};
+		const { menu } = open({ entries: [row] });
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escapes
+		const line = (width: number) => menu.render(width).map((l) => l.replace(/\x1b\[[0-9;]*m/g, "")).find((l) => l.includes("claude-relay"))!;
+
+		assert.ok(line(120).includes("2 models  ✓ 2/2 · 1.2s · 5m ago"), line(120));
+		assert.ok(line(80).endsWith("…  ✓ 2/2 · 1.2s · 5m ago"), line(80));
+		assert.ok(line(80).includes("claude.example-relay.com"), line(80));
+		// Too narrow for a useful detail: it goes, the badge stays.
+		assert.equal(line(45).trim(), "→ claude-relay  ✓ 2/2 · 1.2s · 5m ago");
+	});
+
 	it("starts on the first selectable row and skips headings, separators and disabled rows", () => {
 		const { menu, chosen } = open({});
 		assert.equal(menu.focusedRow?.id, "a");
