@@ -95,6 +95,16 @@ const REFRESHABLE_FIELDS = [
 	"compat",
 ] as const;
 
+type RefreshableField = (typeof REFRESHABLE_FIELDS)[number];
+
+/**
+ * `entry[field] = value` with a generic key: with a union-typed key TS
+ * checks the assignment against the intersection of all field types.
+ */
+function setField<K extends RefreshableField>(entry: ModelEntry, field: K, value: ModelEntry[K]): void {
+	entry[field] = value;
+}
+
 export interface ModelRefreshChange {
 	id: string;
 	field: string;
@@ -151,7 +161,7 @@ export function refreshModelEntries(
 			if (JSON.stringify(from ?? null) === JSON.stringify(to ?? null)) continue;
 			changes.push({ id: model.id, field, from, to });
 			if (to === undefined) delete next[field];
-			else next[field] = to;
+			else setField(next, field, to);
 		}
 		models.push(next);
 	}
