@@ -1,6 +1,6 @@
 {
   "name": "@blueocean223/pi-provider",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "/provider command for pi: add, edit and test custom providers (relays, proxies, local servers) in models.json",
   "license": "MIT",
   "author": "BlueOcean223",
