@@ -26,33 +26,32 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 
 ## 安装
 
-先克隆本仓库（下面各方式都假定当前目录就是克隆下来的 `pi-provider/`）：
+以 pi package 方式安装发布版本（无需克隆）：
+
+```bash
+pi install git:github.com/BlueOcean223/pi-provider@v0.2.0
+```
+
+pi 会固定在这个 tag 上；升级时安装更新的 tag。npm 上名为 `pi-provider` 的包是另一个项目，不要安装 `npm:pi-provider`。
+
+**从克隆的仓库安装（开发用）**
 
 ```bash
 git clone https://github.com/BlueOcean223/pi-provider.git
 cd pi-provider
 ```
 
-**方式 A — 软链到全局 extensions（开发推荐）**
+然后软链到全局 extensions 目录：
 
 ```bash
 mkdir -p ~/.pi/agent/extensions
 ln -sfn "$(pwd)" ~/.pi/agent/extensions/pi-provider
 ```
 
-然后重启 pi，或在会话里执行 `/reload`。
-
-**方式 B — 临时加载**
+再重启 pi（或在会话里执行 `/reload`）；也可以只在本次运行中加载：
 
 ```bash
 pi -e "$(pwd)/index.ts"
-```
-
-**方式 C — pi package（可选）**
-
-```bash
-pi install file:"$(pwd)"
-# 或以后发布后: pi install npm:pi-provider
 ```
 
 ## 用法

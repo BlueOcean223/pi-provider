@@ -26,33 +26,32 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 
 ## Installation
 
-Clone this repo first (all methods below assume your current directory is the cloned `pi-provider/`):
+Install a release as a pi package (no clone needed):
+
+```bash
+pi install git:github.com/BlueOcean223/pi-provider@v0.2.0
+```
+
+pi pins the tag; install a newer tag to upgrade. The npm package named `pi-provider` is a different project, so don't install `npm:pi-provider`.
+
+**From a clone (for development)**
 
 ```bash
 git clone https://github.com/BlueOcean223/pi-provider.git
 cd pi-provider
 ```
 
-**Option A — Symlink into global extensions (recommended for development)**
+Then either symlink it into the global extensions directory:
 
 ```bash
 mkdir -p ~/.pi/agent/extensions
 ln -sfn "$(pwd)" ~/.pi/agent/extensions/pi-provider
 ```
 
-Then restart pi, or run `/reload` inside a session.
-
-**Option B — Load ad-hoc**
+and restart pi (or run `/reload` inside a session), or load it for one run:
 
 ```bash
 pi -e "$(pwd)/index.ts"
-```
-
-**Option C — pi package (optional)**
-
-```bash
-pi install file:"$(pwd)"
-# or once published: pi install npm:pi-provider
 ```
 
 ## Usage
