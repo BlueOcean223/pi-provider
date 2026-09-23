@@ -2,7 +2,68 @@
 
 [English](README.md) | **简体中文**
 
-Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)）扩展：提供交互式 `/provider` 命令，一步步问答即可管理自定义供应商（中转站 / 代理 / 本地 OpenAI 兼容服务），直接读写 `~/.pi/agent/models.json`，不用手写 JSON。
+Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)）扩展：提供 `/provider` 命令，管理 `~/.pi/agent/models.json` 里的自定义供应商——中转站、代理、本地 OpenAI 兼容服务。添加供应商、选模型、测试、切换模型，都不用手写 JSON。
+
+## 界面展示
+
+**供应商列表**（`/provider`）——每个供应商一行，带最近一次测试结果；回车进入，`t` 测试：
+
+```
+ Providers
+ ~/.pi/agent/models.json
+
+ → claude-relay  claude.example-relay.com · anthropic-messages · 2 models  ✓ 2/2 · 1.2s · 5m ago
+   google        proxy → gemini.example-relay.com
+   ollama        localhost:11434/v1 · openai-completions · 1 model  ✓ 1/1 · 310ms · 1h ago
+   relay-one     api.relay-one.com/v1 · openai-completions · 3 models
+
+   + Add provider
+   + Add local server (Ollama · LM Studio · vLLM)
+   + Route a built-in provider through a relay
+   Edit models.json
+
+ ↑↓ navigate  enter open  t test  escape/ctrl+c close
+```
+
+**测试面板**——chat 测试走 pi 自己的请求路径；中转站的报错如果对应某个 compat 标记，会直接给出修复方法（按 `c`），在通过的模型上回车即切换：
+
+```
+ Test provider: relay-one
+ api.relay-one.com/v1 · openai-completions · 3 models
+
+   ✓ Catalog probe — listed 3 model(s) · 205ms
+       https://api.relay-one.com/v1/models · HTTP 200
+ → ✓ Chat test (gpt-4.1) — replied · 821ms
+   ✗ Chat test (o3-mini) — HTTP 400: Invalid value: 'developer' is not a supported role
+       ↳ relay rejects the "developer" role — press c to set supportsDeveloperRole=false
+   ✓ Chat test (deepseek-chat) — replied · 1.1s
+
+ ✗ 1 of 4 check(s) failed
+ ↑↓ choose  enter use model  c apply compat fix  x remove 1 failing  s choose models  r run again
+ escape/ctrl+c close
+```
+
+**供应商页面**（`/provider relay-one`）——每项设置一行，就地编辑：
+
+```
+ relay-one
+
+ → Base URL      https://api.relay-one.com/v1
+   Protocol      OpenAI Chat Completions
+   API key       stored in models.json · sk-…9c2e
+   Display name  (none — shows the id)
+   Compat        none
+
+   Models        3 configured
+   Add model ids manually
+   Sync metadata from pi's catalog
+
+   Test connection
+   View JSON
+   Delete provider
+
+ ↑↓ navigate  enter edit / open  escape/ctrl+c back
+```
 
 ## 特性
 
@@ -38,15 +99,7 @@ pi install npm:@blueocean223/pi-provider
 pi -e npm:@blueocean223/pi-provider
 ```
 
-**从源码安装（开发用）**
-
-```bash
-git clone https://github.com/BlueOcean223/pi-provider.git
-cd pi-provider
-pi install "$(pwd)"
-```
-
-本地路径会直接写入设置、不复制文件，修改后执行 `/reload` 即生效。
+从源码安装、参与开发见[开发](#开发)。
 
 ## 用法
 
@@ -161,7 +214,18 @@ pi 取凭据的顺序是：`--api-key`、`/login` 存的凭据（`auth.json`）�
 
 保存后在测试面板里对通过的模型按回车即可切换，也可以之后用 `/model` 选择；无需重启 pi。
 
-## 文件结构
+## 开发
+
+```bash
+git clone https://github.com/BlueOcean223/pi-provider.git
+cd pi-provider
+pi install "$(pwd)"
+npm test
+```
+
+本地路径会直接写入设置、不复制文件，修改后执行 `/reload` 即生效。
+
+文件结构：
 
 ```
 pi-provider/
@@ -175,6 +239,7 @@ pi-provider/
 │   ├── test.ts                # 测试面板流程：注册表 chat 测试、compat 修复、移除失败模型、切换模型
 │   ├── fields.ts              # 每个供应商字段一个输入界面（新增、汇总页、供应商页面共用）
 │   └── shared.ts              # 鉴权解析、注册表刷新、元数据补全、写入助手
+├── scripts/verify-pack.mjs    # 检查 `npm publish` 实际要发布的文件
 └── lib/
     ├── types.ts               # ProviderApi / ModelEntry / ProviderConfig 等类型与文案
     ├── models-json.ts         # 读写 models.json（兼容 JSONC、原子写入、0600 权限收紧）
@@ -190,7 +255,7 @@ pi-provider/
     └── testing/tui-harness.ts # 测试中用脚本按键驱动 ui.custom 界面
 ```
 
-运行 `npm test`（Node 22+）执行测试：覆盖各组件（checklist、行列表、输入框、测试面板）、向导步骤机、模型 diff/merge 不变量、compat 提示，以及 TUI 模式下用脚本按键跑完整流程（新增 → 汇总 → 保存 → 测试 → 切换模型、compat 修复后重测、在供应商页面修改 key）和 RPC 模式下的流程。
+运行 `npm test`（Node 22.19+）执行测试：覆盖各组件（checklist、行列表、输入框、测试面板）、向导步骤机、模型 diff/merge 不变量、compat 提示，以及 TUI 模式下用脚本按键跑完整流程（新增 → 汇总 → 保存 → 测试 → 切换模型、compat 修复后重测、在供应商页面修改 key）和 RPC 模式下的流程。
 
 `npm publish` 前会先跑测试和 `scripts/verify-pack.mjs`：它按 import 关系检查 npm 实际要打包的文件（不缺文件，也不带测试和本地笔记）。
 
