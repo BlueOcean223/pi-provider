@@ -127,9 +127,16 @@ async function resolveSavedProviderAuth(
 	}
 }
 
-async function refreshModelRegistry(ctx: ExtensionCommandContext): Promise<void> {
+async function refreshModelRegistry(ctx: ExtensionCommandContext, providerId: string): Promise<void> {
 	try {
-		await ctx.modelRegistry.refresh();
+		// Since pi 0.84, refresh() reports per-provider failures in its result
+		// instead of throwing. Only this provider's failure is relevant here;
+		// another provider failing (e.g. offline) must not produce a warning.
+		const result = await ctx.modelRegistry.refresh();
+		const error = result.errors.get(providerId);
+		if (error) {
+			ctx.ui.notify(`Could not refresh ${providerId}: ${error.message}`, "warning");
+		}
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		ctx.ui.notify(`Could not refresh the model registry: ${message}`, "warning");
@@ -893,7 +900,7 @@ async function manageProviderModels(
 			// models.json may have changed since the registry was last loaded (for
 			// example after an earlier add/remove in this session). Refresh before
 			// using effective provider models to calculate the remote diff.
-			await refreshModelRegistry(ctx);
+			await refreshModelRegistry(ctx, providerId);
 			const listed = await withSpinner(
 				ctx,
 				`Fetching model catalog from ${cfg.baseUrl}…`,
