@@ -40,14 +40,16 @@ interface SettingsListInternals {
 		getValue: () => string;
 		render: (width: number) => string[];
 	};
+	activateItem?: () => void;
 }
 
 /**
  * Multi-select checklist built on pi-tui's SettingsList.
  *
  * SettingsList is a *settings* component — it renders rows as
- * `label …… on/off` and hardcodes Enter AND Space to toggle. Both are the
- * wrong semantics for picking models, so this subclass keeps the base
+ * `label …… on/off`, Enter toggles the focused row, and Space toggles it
+ * only while the search query is empty (otherwise the space goes into the
+ * query). Neither fits picking models, so this subclass keeps the base
  * class's state (search filter, scroll window, selection index) but
  * replaces interaction and presentation:
  *
@@ -86,6 +88,13 @@ export class MultiSelectList extends SettingsList {
 		// Enter = confirm the current on-set, even mid-search.
 		if (this.kb.matches(data, "tui.select.confirm")) {
 			this.onConfirm();
+			return;
+		}
+		// Space toggles the focused row, mid-search too. Since pi-tui 0.84 the
+		// base class hands a space to the search input whenever the query is
+		// non-empty, so it has to be caught here.
+		if (data === " " && typeof internals.activateItem === "function") {
+			internals.activateItem.call(this);
 			return;
 		}
 		super.handleInput(data);
