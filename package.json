@@ -1,14 +1,42 @@
 {
-  "name": "pi-provider",
+  "name": "@blueocean223/pi-provider",
   "version": "0.2.0",
-  "description": "Pi slash command to add/edit custom providers (relays, proxies) in models.json",
+  "description": "/provider command for pi: add, edit and test custom providers (relays, proxies, local servers) in models.json",
   "license": "MIT",
+  "author": "BlueOcean223",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BlueOcean223/pi-provider.git"
+  },
+  "homepage": "https://github.com/BlueOcean223/pi-provider#readme",
+  "bugs": {
+    "url": "https://github.com/BlueOcean223/pi-provider/issues"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "test": "node --test 'lib/*.test.ts'"
+    "test": "node --test 'lib/*.test.ts'",
+    "verify-pack": "node scripts/verify-pack.mjs",
+    "prepublishOnly": "npm test && npm run verify-pack"
   },
   "pi": {
     "extensions": ["./index.ts"]
   },
-  "keywords": ["pi", "pi-coding-agent", "provider", "models.json", "relay"]
+  "files": [
+    "index.ts",
+    "flows/*.ts",
+    "lib/*.ts",
+    "!lib/*.test.ts",
+    "README.zh-CN.md"
+  ],
+  "keywords": ["pi-package", "pi", "pi-coding-agent", "provider", "models.json", "relay"],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  }
 }

@@ -26,33 +26,27 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 
 ## Installation
 
-Install a release as a pi package (no clone needed):
-
 ```bash
-pi install git:github.com/BlueOcean223/pi-provider@v0.2.0
+pi install npm:@blueocean223/pi-provider
 ```
 
-pi pins the tag; install a newer tag to upgrade. The npm package named `pi-provider` is a different project, so don't install `npm:pi-provider`.
+Restart pi, or run `/reload` inside a session. Add `-l` to install into the project (`.pi/settings.json`) instead of globally, and `pi remove npm:@blueocean223/pi-provider` to uninstall. Note the scope: the unscoped `pi-provider` on npm is a different project.
 
-**From a clone (for development)**
+To try it for a single run without installing:
+
+```bash
+pi -e npm:@blueocean223/pi-provider
+```
+
+**From source (for development)**
 
 ```bash
 git clone https://github.com/BlueOcean223/pi-provider.git
 cd pi-provider
+pi install "$(pwd)"
 ```
 
-Then either symlink it into the global extensions directory:
-
-```bash
-mkdir -p ~/.pi/agent/extensions
-ln -sfn "$(pwd)" ~/.pi/agent/extensions/pi-provider
-```
-
-and restart pi (or run `/reload` inside a session), or load it for one run:
-
-```bash
-pi -e "$(pwd)/index.ts"
-```
+A local path is added to settings without copying, so edits apply on the next `/reload`.
 
 ## Usage
 
@@ -197,6 +191,8 @@ pi-provider/
 ```
 
 Run the tests with `npm test` (Node 22+). They cover the components (checklist, row menu, input, test panel), the wizard step machine, model diff/merge invariants, compat hints, and whole flows in TUI mode with scripted keys (add → review → save → test → switch, compat fix and re-test, key edit on the provider page) and in RPC mode.
+
+`npm publish` runs the tests and `scripts/verify-pack.mjs` first; the script checks the tarball npm would ship against the import graph (nothing missing, no tests or local notes included).
 
 ## Notes
 

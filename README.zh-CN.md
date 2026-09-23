@@ -26,33 +26,27 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 
 ## 安装
 
-以 pi package 方式安装发布版本（无需克隆）：
-
 ```bash
-pi install git:github.com/BlueOcean223/pi-provider@v0.2.0
+pi install npm:@blueocean223/pi-provider
 ```
 
-pi 会固定在这个 tag 上；升级时安装更新的 tag。npm 上名为 `pi-provider` 的包是另一个项目，不要安装 `npm:pi-provider`。
+然后重启 pi，或在会话里执行 `/reload`。加 `-l` 则安装到当前项目（`.pi/settings.json`）而不是全局；卸载用 `pi remove npm:@blueocean223/pi-provider`。注意带 scope：npm 上不带 scope 的 `pi-provider` 是另一个项目。
 
-**从克隆的仓库安装（开发用）**
+不安装、只在本次运行中试用：
+
+```bash
+pi -e npm:@blueocean223/pi-provider
+```
+
+**从源码安装（开发用）**
 
 ```bash
 git clone https://github.com/BlueOcean223/pi-provider.git
 cd pi-provider
+pi install "$(pwd)"
 ```
 
-然后软链到全局 extensions 目录：
-
-```bash
-mkdir -p ~/.pi/agent/extensions
-ln -sfn "$(pwd)" ~/.pi/agent/extensions/pi-provider
-```
-
-再重启 pi（或在会话里执行 `/reload`）；也可以只在本次运行中加载：
-
-```bash
-pi -e "$(pwd)/index.ts"
-```
+本地路径会直接写入设置、不复制文件，修改后执行 `/reload` 即生效。
 
 ## 用法
 
@@ -197,6 +191,8 @@ pi-provider/
 ```
 
 运行 `npm test`（Node 22+）执行测试：覆盖各组件（checklist、行列表、输入框、测试面板）、向导步骤机、模型 diff/merge 不变量、compat 提示，以及 TUI 模式下用脚本按键跑完整流程（新增 → 汇总 → 保存 → 测试 → 切换模型、compat 修复后重测、在供应商页面修改 key）和 RPC 模式下的流程。
+
+`npm publish` 前会先跑测试和 `scripts/verify-pack.mjs`：它按 import 关系检查 npm 实际要打包的文件（不缺文件，也不带测试和本地笔记）。
 
 ## 注意事项
 
