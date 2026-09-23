@@ -136,36 +136,43 @@ class WrapEditorComponent extends ExtensionEditorComponent {
 	}
 
 	handleInput(keyData: string): void {
-		// Wrap-around cursor: ↑ on the first line jumps to the last line,
-		// ↓ on the last line jumps back to the first.
+		// Wrap-around cursor: ↑ on the first visual row jumps to the last row,
+		// ↓ on the last visual row jumps back to the first.
 		const ed = (this as unknown as { editor?: Editor }).editor;
 		if (ed && !ed.isShowingAutocomplete()) {
-			const lines = ed.getLines();
-			if (lines.length > 1) {
-				const kb = getKeybindings();
-				const up = kb.matches(keyData, "tui.editor.cursorUp");
-				const down = !up && kb.matches(keyData, "tui.editor.cursorDown");
-				if (up || down) {
-					const cursor = ed.getCursor();
-					const target = up && cursor.line === 0 ? lines.length - 1 : down && cursor.line === lines.length - 1 ? 0 : undefined;
-					if (target !== undefined) {
-						// Editor keeps cursor state private, so this reaches into
-						// pi-tui internals (state.cursorLine / preferredVisualCol).
-						// Coupled to the installed pi-tui version: if a pi-tui
-						// update renames these fields, the guard below makes
-						// wrap-around silently stop (falling back to clamped
-						// cursor movement) rather than crash.
-						const internals = ed as unknown as {
-							state?: { cursorLine: number; cursorCol: number };
-							preferredVisualCol?: number | null;
-						};
-						if (internals.state) {
-							internals.state.cursorLine = target;
-							internals.state.cursorCol = Math.min(cursor.col, lines[target]!.length);
-							internals.preferredVisualCol = null;
-							this.wrapTui.requestRender();
-							return;
-						}
+			const kb = getKeybindings();
+			const up = kb.matches(keyData, "tui.editor.cursorUp");
+			const down = !up && kb.matches(keyData, "tui.editor.cursorDown");
+			if (up || down) {
+				// Editor keeps its visual-line helpers private, so this reaches
+				// into pi-tui internals. moveToVisualLine is what ↑/↓ use: it keeps
+				// the sticky column and snaps onto a paste marker instead of
+				// landing inside one. Coupled to the installed pi-tui version: if
+				// a pi-tui update renames these, the guard below makes wrap-around
+				// silently stop (falling back to clamped cursor movement) rather
+				// than crash.
+				const internals = ed as unknown as {
+					lastWidth?: number;
+					lastAction?: unknown;
+					buildVisualLineMap?: (width: number) => unknown[];
+					findCurrentVisualLine?: (visualLines: unknown[]) => number;
+					moveToVisualLine?: (visualLines: unknown[], from: number, to: number) => void;
+				};
+				if (
+					typeof internals.lastWidth === "number" &&
+					typeof internals.buildVisualLineMap === "function" &&
+					typeof internals.findCurrentVisualLine === "function" &&
+					typeof internals.moveToVisualLine === "function"
+				) {
+					const visualLines = internals.buildVisualLineMap.call(ed, internals.lastWidth);
+					const from = internals.findCurrentVisualLine.call(ed, visualLines);
+					const last = visualLines.length - 1;
+					const target = up && from === 0 ? last : down && from === last ? 0 : undefined;
+					if (target !== undefined && last > 0) {
+						internals.lastAction = null;
+						internals.moveToVisualLine.call(ed, visualLines, from, target);
+						this.wrapTui.requestRender();
+						return;
 					}
 				}
 			}
