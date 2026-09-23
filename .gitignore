@@ -24,3 +24,6 @@ npm-debug.log*
 
 # Package manager
 .pnpm-store/
+
+# Agent working notes (local design records)
+.agent/
