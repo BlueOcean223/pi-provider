@@ -65,11 +65,10 @@ describe("/provider models", () => {
 			} as never);
 			assert.ok(command);
 
-			const selections = [
-				"Discover and add new models",
-				"Add all 1 new models",
-				"Yes — add models",
-			];
+			// Non-TUI: the model list is an on/off editor (configured models start
+			// "on", relay additions "off"), then the diff is confirmed.
+			const selections = ["Save changes"];
+			const editorPrefills: Array<string | undefined> = [];
 			const notifications: string[] = [];
 			await command.handler("models relay", {
 				hasUI: true,
@@ -89,16 +88,19 @@ describe("/provider models", () => {
 				ui: {
 					select: async (_title: string, options: string[]) => {
 						const next = selections.shift();
-						assert.ok(next && options.includes(next));
+						assert.ok(next && options.includes(next), `${next} not in ${options.join(" | ")}`);
 						return next;
 					},
-					editor: async () => {
-						throw new Error("manual editor should not open");
+					editor: async (_title: string, prefill?: string) => {
+						editorPrefills.push(prefill);
+						return "on model-a\non model-b";
 					},
 					notify: (message: string) => notifications.push(message),
 				},
 			} as never);
 
+			// model-c is inherited from the registry, so only model-b is new.
+			assert.deepEqual(editorPrefills, ["on  model-a\noff model-b"]);
 			const saved = JSON.parse(readFileSync(path, "utf8"));
 			assert.deepEqual(
 				saved.providers.relay.models.map((model: { id: string }) => model.id),
@@ -111,7 +113,7 @@ describe("/provider models", () => {
 				compat: { custom: true },
 			});
 			assert.equal(saved.providers.relay.models[1].api, "openai-completions");
-			assert.ok(notifications.some((message) => message.includes("Added 1 model(s)")));
+			assert.deepEqual(notifications, ["Added 1 model(s) on relay"]);
 		} finally {
 			globalThis.fetch = previousFetch;
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -156,7 +158,7 @@ describe("/provider models", () => {
 			} as never);
 			assert.ok(command);
 
-			const selections = ["Remove configured models", "Yes — remove models"];
+			const selections = ["Remove models"];
 			const notifications: string[] = [];
 			await command.handler("models relay", {
 				hasUI: true,
@@ -168,14 +170,14 @@ describe("/provider models", () => {
 						assert.ok(next && options.includes(next));
 						return next;
 					},
-					editor: async () => "off model-a\non model-b",
+					editor: async () => "on model-a\noff model-b",
 					notify: (message: string) => notifications.push(message),
 				},
 			} as never);
 
 			const saved = JSON.parse(readFileSync(path, "utf8"));
 			assert.deepEqual(saved.providers.relay.models, [{ id: "model-a", contextWindow: 42 }]);
-			assert.ok(notifications.some((message) => message.includes("Removed 1 model(s)")));
+			assert.deepEqual(notifications, ["Removed 1 model(s) on relay"]);
 		} finally {
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
@@ -213,21 +215,27 @@ describe("/provider models", () => {
 			} as never);
 			assert.ok(command);
 
-			const selections = ["Remove configured models", "Yes — remove models"];
-			await command.handler("models relay", {
-				hasUI: true,
-				mode: "rpc",
-				modelRegistry: { getAll: () => [] },
-				ui: {
-					select: async (_title: string, options: string[]) => {
-						const next = selections.shift();
-						assert.ok(next && options.includes(next));
-						return next;
+			const previousFetch = globalThis.fetch;
+			globalThis.fetch = (async () => Response.json({ data: [{ id: "model-a" }] })) as typeof fetch;
+			const selections = ["Remove models"];
+			try {
+				await command.handler("models relay", {
+					hasUI: true,
+					mode: "rpc",
+					modelRegistry: { getAll: () => [] },
+					ui: {
+						select: async (_title: string, options: string[]) => {
+							const next = selections.shift();
+							assert.ok(next && options.includes(next), `${next} not in ${options.join(" | ")}`);
+							return next;
+						},
+						editor: async () => "off model-a",
+						notify: () => {},
 					},
-					editor: async () => "on model-a",
-					notify: () => {},
-				},
-			} as never);
+				} as never);
+			} finally {
+				globalThis.fetch = previousFetch;
+			}
 
 			const saved = JSON.parse(readFileSync(path, "utf8"));
 			assert.equal(saved.providers.relay.api, "openai-completions");

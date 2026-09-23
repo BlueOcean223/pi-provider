@@ -5,6 +5,7 @@ import {
 	SettingsList,
 	type SettingsListTheme,
 	truncateToWidth,
+	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
@@ -13,10 +14,29 @@ export interface CheckboxItem {
 	id: string;
 	/** Primary label (model id). */
 	label: string;
-	/** Secondary info (ctx, thinking, match status). */
+	/** Secondary info shown under the list for the focused row. */
 	description?: string;
+	/** Short dim text shown on the row itself (ctx, thinking, new / gone badges). */
+	detail?: string;
 	/** Pre-checked. */
 	checked?: boolean;
+}
+
+export interface CheckboxSelectOptions {
+	/** Muted lines under the title (e.g. why the relay catalog is missing). */
+	notes?: string[];
+	/** Replaces the default "N/M selected" line; recomputed on every toggle. */
+	status?: (selected: ReadonlySet<string>) => string;
+	/** Return an error to block Enter (shown inline), or undefined to accept. */
+	validate?: (selected: string[]) => string | undefined;
+}
+
+/** Optional presentation hooks for MultiSelectList. */
+export interface MultiSelectExtras {
+	/** Inline row detail, rendered dim after the label. */
+	detailFor?: (id: string) => string | undefined;
+	/** Style for the inline validation error. */
+	errorStyle?: (text: string) => string;
 }
 
 /**
@@ -55,14 +75,22 @@ interface SettingsListInternals {
  *
  * - rows render as `[x]` / `[ ]` checkboxes, focused row highlighted
  * - Space toggles the focused row
+ * - Ctrl+A checks every visible (search-filtered) row, or unchecks them when
+ *   all are already checked
  * - Enter finishes with the currently-checked items (confirm)
  * - Esc / ctrl+c cancels (undefined)
  * - Space and Enter are intercepted before the base class can see them, so
  *   neither falls through to the search input or the built-in toggle.
  */
+const CTRL_A = "\x01";
+const MAX_LABEL_COLUMN = 40;
+
 export class MultiSelectList extends SettingsList {
 	private readonly kb: { matches(data: string, action: string): boolean };
 	private readonly onConfirm: () => void;
+	private readonly onToggle: (id: string, newValue: string) => void;
+	private readonly extras: MultiSelectExtras;
+	private error = "";
 
 	constructor(
 		items: SettingItem[],
@@ -72,10 +100,18 @@ export class MultiSelectList extends SettingsList {
 		onCancel: () => void,
 		onConfirm: () => void,
 		kb: { matches(data: string, action: string): boolean },
+		extras: MultiSelectExtras = {},
 	) {
 		super(items, maxVisible, theme, onChange, onCancel, { enableSearch: true });
 		this.kb = kb;
 		this.onConfirm = onConfirm;
+		this.onToggle = onChange;
+		this.extras = extras;
+	}
+
+	/** Show an inline error above the key hints until the next toggle. */
+	setError(text: string): void {
+		this.error = text;
 	}
 
 	override handleInput(data: string): void {
@@ -90,14 +126,33 @@ export class MultiSelectList extends SettingsList {
 			this.onConfirm();
 			return;
 		}
+		if (data === CTRL_A) {
+			this.toggleVisible();
+			return;
+		}
 		// Space toggles the focused row, mid-search too. Since pi-tui 0.84 the
 		// base class hands a space to the search input whenever the query is
 		// non-empty, so it has to be caught here.
 		if (data === " " && typeof internals.activateItem === "function") {
+			this.error = "";
 			internals.activateItem.call(this);
 			return;
 		}
 		super.handleInput(data);
+	}
+
+	/** Check every visible row, or uncheck them all when they already are. */
+	private toggleVisible(): void {
+		const { items, filteredItems, searchEnabled } = this.asInternals();
+		const visible = searchEnabled && Array.isArray(filteredItems) ? filteredItems : items;
+		if (!Array.isArray(visible) || visible.length === 0) return;
+		const next = visible.every((item) => item.currentValue === "on") ? "off" : "on";
+		this.error = "";
+		for (const item of visible) {
+			if (item.currentValue === next) continue;
+			item.currentValue = next;
+			this.onToggle(item.id, next);
+		}
 	}
 
 	/** Checklist rendering — replaces the base class's settings-style rows. */
@@ -141,6 +196,10 @@ export class MultiSelectList extends SettingsList {
 			Math.min(selectedIndex - Math.floor(maxVisible / 2), displayItems.length - maxVisible),
 		);
 		const endIndex = Math.min(startIndex + maxVisible, displayItems.length);
+		const detailFor = this.extras.detailFor;
+		const labelColumn = detailFor
+			? Math.min(MAX_LABEL_COLUMN, Math.max(...items.map((item) => visibleWidth(item.label))))
+			: 0;
 
 		for (let i = startIndex; i < endIndex; i++) {
 			const item = displayItems[i];
@@ -149,7 +208,10 @@ export class MultiSelectList extends SettingsList {
 			// theme.value is wired to render "[x]" checked/accent and "[ ]" dim.
 			const box = theme.value(item.currentValue === "on" ? "[x]" : "[ ]", isSelected);
 			const prefix = isSelected ? theme.cursor : "  ";
-			lines.push(truncateToWidth(`${prefix}${box} ${theme.label(item.label, isSelected)}`, width));
+			const detail = detailFor?.(item.id);
+			const gap = detail ? " ".repeat(Math.max(2, labelColumn - visibleWidth(item.label) + 2)) : "";
+			const suffix = detail ? `${gap}${theme.description(detail)}` : "";
+			lines.push(truncateToWidth(`${prefix}${box} ${theme.label(item.label, isSelected)}${suffix}`, width));
 		}
 
 		if (startIndex > 0 || endIndex < displayItems.length) {
@@ -172,12 +234,16 @@ export class MultiSelectList extends SettingsList {
 	private addChecklistHint(lines: string[], width: number): void {
 		const { theme, searchEnabled } = this.asInternals();
 		lines.push("");
+		if (this.error) {
+			const style = this.extras.errorStyle ?? ((text: string) => text);
+			lines.push(truncateToWidth(style(`  ✗ ${this.error}`), width));
+		}
 		lines.push(
 			truncateToWidth(
 				theme.hint(
 					searchEnabled
-						? "  Type to search · Space toggle · Enter confirm · Esc cancel"
-						: "  Space toggle · Enter confirm · Esc cancel",
+						? "  Type to search · Space toggle · Ctrl+A all · Enter confirm · Esc cancel"
+						: "  Space toggle · Ctrl+A all · Enter confirm · Esc cancel",
 				),
 				width,
 			),
@@ -193,12 +259,13 @@ export class MultiSelectList extends SettingsList {
  * Multi-select checklist for picking models:
  * - `[x]` / `[ ]` checkboxes, cursor `→ `, focused row highlighted
  * - type to search (fuzzy, like /model and settings)
- * - Space toggles, Enter confirms, Esc cancels
+ * - Space toggles, Ctrl+A toggles all visible, Enter confirms, Esc cancels
  */
 export async function checkboxSelect(
 	ctx: ExtensionCommandContext,
 	title: string,
 	items: CheckboxItem[],
+	options: CheckboxSelectOptions = {},
 ): Promise<string[] | undefined> {
 	const { ui } = ctx;
 	if (items.length === 0) return [];
@@ -209,17 +276,22 @@ export async function checkboxSelect(
 	if (ctx.mode !== "tui") {
 		// Non-TUI fallback (ui.editor works over RPC)
 		const prefill = items.map((i) => `${i.checked ? "on " : "off"} ${i.id}`).join("\n");
-		const edited = await ui.editor(
-			`${title}\n(set line to "on <id>" to include, "off <id>" to skip; submit to confirm)`,
-			prefill,
-		);
-		if (edited === undefined) return undefined;
-		const selected: string[] = [];
-		for (const line of edited.split("\n")) {
-			const m = line.match(/^\s*on\s+(\S+)/i);
-			if (m) selected.push(m[1]!);
+		const heading = [title, ...(options.notes ?? [])].join("\n");
+		while (true) {
+			const edited = await ui.editor(
+				`${heading}\n(set line to "on <id>" to include, "off <id>" to skip; submit to confirm)`,
+				prefill,
+			);
+			if (edited === undefined) return undefined;
+			const selected: string[] = [];
+			for (const line of edited.split("\n")) {
+				const m = line.match(/^\s*on\s+(\S+)/i);
+				if (m) selected.push(m[1]!);
+			}
+			const error = options.validate?.(selected);
+			if (!error) return selected;
+			ui.notify(error, "error");
 		}
-		return selected;
 	}
 
 	return ui.custom<string[] | undefined>((tui, theme, kb, done) => {
@@ -235,11 +307,14 @@ export async function checkboxSelect(
 
 		const container = new Container();
 
+		const details = new Map(items.flatMap((i) => (i.detail ? [[i.id, i.detail] as const] : [])));
 		const header = {
 			render(_width: number) {
+				const status = options.status?.(selected) ?? `${selected.size}/${items.length} selected`;
 				return [
 					theme.fg("accent", theme.bold(title)),
-					theme.fg("dim", ` ${selected.size}/${items.length} selected`),
+					...(options.notes ?? []).map((note) => theme.fg("muted", ` ${note}`)),
+					theme.fg("dim", ` ${status}`),
 					"",
 				];
 			},
@@ -274,10 +349,22 @@ export async function checkboxSelect(
 				done(undefined);
 			},
 			() => {
-				// Enter — confirm the current on-set
-				done(Array.from(selected));
+				// Enter — confirm the current on-set, unless the caller rejects it
+				// (the error shows inline and the list stays open).
+				const picked = items.map((i) => i.id).filter((id) => selected.has(id));
+				const error = options.validate?.(picked);
+				if (error) {
+					settingsList.setError(error);
+					tui.requestRender();
+					return;
+				}
+				done(picked);
 			},
 			kb,
+			{
+				detailFor: details.size > 0 ? (id) => details.get(id) : undefined,
+				errorStyle: (text) => theme.fg("error", text),
+			},
 		);
 
 		container.addChild(settingsList);

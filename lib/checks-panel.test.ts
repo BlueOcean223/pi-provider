@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
-import { ChecksPanel, type CheckResult, type PanelCheck } from "./checks-panel.ts";
+import { type ChecksPanelOutcome, ChecksPanel, type CheckResult, type PanelCheck } from "./checks-panel.ts";
 
 // DynamicBorder and keyHint() read pi's global theme; the panel's own colouring
 // goes through the injected theme, so a pass-through stub keeps the rendered
@@ -177,6 +177,75 @@ describe("ChecksPanel concurrency", () => {
 		const out = panel.render(80).join("\n");
 		assert.ok(out.includes("− skipped — skipped: no api"), out);
 		assert.ok(!out.includes("0/1 done"), out); // single check: no progress counter
+		panel.dispose();
+	});
+});
+
+describe("ChecksPanel decisions after a run", () => {
+	const ok = (id: string): PanelCheck => ({ id, label: id, run: async () => ({ ok: true, detail: "fine" }) });
+	const bad = (id: string): PanelCheck => ({ id, label: id, run: async () => ({ ok: false, detail: "broken", hint: "try x" }) });
+
+	it("puts a cursor on passing rows and picks one with Enter", async () => {
+		const outcomes: ChecksPanelOutcome[] = [];
+		const panel = new ChecksPanel(
+			stubTui,
+			stubTheme,
+			{ title: "t", checks: [ok("a"), bad("b"), ok("c")], pickLabel: "use model" },
+			(o) => outcomes.push(o),
+		);
+		await flush();
+		const out = panel.render(100).join("\n");
+		assert.ok(out.includes("→ ✓ a — fine"), out);
+		assert.ok(out.includes("↳ try x"), out);
+		assert.ok(out.includes("use model"), out);
+		panel.handleInput("\x1b[B"); // skips the failed row
+		panel.handleInput("\r");
+		assert.equal(outcomes[0]?.kind, "picked");
+		assert.equal(outcomes[0]?.kind === "picked" && outcomes[0].id, "c");
+		assert.deepEqual(outcomes[0]?.summary.failed, ["b"]);
+		assert.deepEqual(outcomes[0]?.summary.passed, ["a", "c"]);
+	});
+
+	it("offers actions only when available and reports latency", async () => {
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: key hints use pi's global theme colours
+		const plain = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, "");
+		const outcomes: ChecksPanelOutcome[] = [];
+		const panel = new ChecksPanel(
+			stubTui,
+			stubTheme,
+			{
+				title: "t",
+				checks: [ok("a"), bad("b")],
+				actions: [
+					{ key: "x", label: (s) => `remove ${s.failed.length} failing`, available: (s) => s.failed.length > 0 },
+					{ key: "z", label: "never", available: () => false },
+				],
+			},
+			(o) => outcomes.push(o),
+		);
+		await flush();
+		const out = plain(panel.render(100).join("\n"));
+		assert.ok(out.includes("x remove 1 failing"), out);
+		assert.ok(!out.includes("never"), out);
+		assert.match(out, /✓ a — fine · \d+ms/);
+		panel.handleInput("z");
+		assert.equal(outcomes.length, 0);
+		panel.handleInput("x");
+		const first = outcomes[0] as ChecksPanelOutcome | undefined;
+		assert.equal(first?.kind === "action" && first.key, "x");
+	});
+
+	it("reports an unfinished summary when closed mid-run", () => {
+		const outcomes: ChecksPanelOutcome[] = [];
+		const panel = new ChecksPanel(
+			stubTui,
+			stubTheme,
+			{ title: "t", checks: [{ id: "a", label: "a", run: () => new Promise(() => {}) }] },
+			(o) => outcomes.push(o),
+		);
+		panel.handleInput("\x1b");
+		assert.equal(outcomes[0]?.kind, "closed");
+		assert.equal(outcomes[0]?.summary.finished, false);
 		panel.dispose();
 	});
 });

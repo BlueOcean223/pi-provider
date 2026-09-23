@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { type ExtensionCommandContext, initTheme } from "@earendil-works/pi-coding-agent";
-import { loopEditor, runWizard, type StepOutcome, type WizardStep } from "./loop-ui.ts";
+import { loopEditor, loopInput, runWizard, type StepOutcome, type WizardStep } from "./loop-ui.ts";
 
 // ExtensionEditorComponent reads pi's global theme when it is constructed.
 initTheme("dark");
@@ -151,5 +151,64 @@ describe("loopEditor wrap-around", () => {
 		const ed = openEditor(`short\n${long}`); // cursor on the second row
 		ed.press(UP, DOWN, "Z", ENTER);
 		assert.equal(await ed.result, `short\n${long}Z`);
+	});
+});
+
+/** Opens loopInput in a stubbed TUI. */
+function openInput(opts: Parameters<typeof loopInput>[2]) {
+	let component: { render(width: number): string[]; handleInput(data: string): void } | undefined;
+	const tui = { requestRender() {} };
+	const theme = { fg: (_c: string, t: string) => t, bold: (t: string) => t };
+	const ctx = {
+		mode: "tui",
+		ui: {
+			custom: (factory: (...args: unknown[]) => typeof component) =>
+				new Promise((resolve) => {
+					component = factory(tui, theme, undefined, resolve);
+				}),
+		},
+	} as unknown as ExtensionCommandContext;
+	const result = loopInput(ctx, "Base URL", opts);
+	return {
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escapes
+		text: () => component!.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, ""),
+		press: (...keys: string[]) => {
+			for (const key of keys) component!.handleInput(key);
+		},
+		result,
+	};
+}
+
+describe("loopInput", () => {
+	it("prefills the initial value and submits edits to it", async () => {
+		const input = openInput({ initial: "https://a.test" });
+		assert.ok(input.text().includes("https://a.test"));
+		input.press("/", "v", "1", ENTER);
+		assert.equal(await input.result, "https://a.test/v1");
+	});
+
+	it("shows the placeholder only while empty", () => {
+		const input = openInput({ placeholder: "https://api.example.com/v1" });
+		assert.ok(input.text().includes("https://api.example.com/v1"));
+		input.press("x");
+		assert.ok(!input.text().includes("api.example.com"));
+	});
+
+	it("keeps the dialog open with an inline error when validation fails", async () => {
+		const input = openInput({ validate: (v) => (v ? undefined : "Base URL is required") });
+		input.press(ENTER);
+		assert.ok(input.text().includes("✗ Base URL is required"), input.text());
+		input.press("h");
+		assert.ok(!input.text().includes("✗"), "typing clears the error");
+		input.press(ENTER);
+		assert.equal(await input.result, "h");
+	});
+
+	it("outside the TUI, an empty answer keeps the initial value", async () => {
+		const ctx = {
+			mode: "rpc",
+			ui: { input: async () => "", notify: () => {} },
+		} as unknown as ExtensionCommandContext;
+		assert.equal(await loopInput(ctx, "t", { initial: "keep-me" }), "keep-me");
 	});
 });

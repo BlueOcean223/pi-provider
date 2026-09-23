@@ -33,15 +33,17 @@ function writeRelay(dir: string): string {
 
 interface Harness {
 	chatModels: string[];
+	chatHeaders: Array<Record<string, string>>;
 	notifications: string[];
-	editorPrefills: Array<string | undefined>;
-	run: (answers: string[], editorReply?: string) => Promise<void>;
+	selectTitles: string[];
+	run: (args: string, answers: string[], registry?: unknown) => Promise<void>;
 }
 
 function harness(): Harness {
 	const chatModels: string[] = [];
+	const chatHeaders: Array<Record<string, string>> = [];
 	const notifications: string[] = [];
-	const editorPrefills: Array<string | undefined> = [];
+	const selectTitles: string[] = [];
 
 	const previousFetch = globalThis.fetch;
 	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -51,6 +53,7 @@ function harness(): Harness {
 		}
 		const body = JSON.parse(String(init?.body ?? "{}")) as { model?: string };
 		chatModels.push(body.model ?? "?");
+		chatHeaders.push(init?.headers as Record<string, string>);
 		// model-b is the broken channel — every other model answers.
 		if (body.model === "model-b") {
 			return new Response("no such model", { status: 404 });
@@ -69,27 +72,27 @@ function harness(): Harness {
 
 	return {
 		chatModels,
+		chatHeaders,
 		notifications,
-		editorPrefills,
-		run: async (answers: string[], editorReply?: string) => {
+		selectTitles,
+		run: async (args: string, answers: string[], registry: unknown = { getAll: () => [] }) => {
 			try {
-				await handler("test", {
+				await handler(args, {
 					hasUI: true,
 					mode: "rpc",
-					modelRegistry: { getAll: () => [] },
+					modelRegistry: registry,
 					ui: {
-						select: async (_title: string, options: string[]) => {
+						select: async (title: string, options: string[]) => {
+							selectTitles.push(title);
 							const next = answers.shift();
-							// Out of answers: Esc leaves the provider list, ending the flow.
+							// Out of answers: Esc.
 							if (next === undefined) return undefined;
 							const picked = options.find((option) => option.includes(next));
 							assert.ok(picked, `no option matching "${next}" in: ${options.join(" | ")}`);
 							return picked;
 						},
-						editor: async (_title: string, prefill?: string) => {
-							editorPrefills.push(prefill);
-							assert.ok(editorReply !== undefined, "unexpected checklist editor");
-							return editorReply;
+						editor: async () => {
+							throw new Error("unexpected editor");
 						},
 						notify: (message: string) => notifications.push(message),
 					},
@@ -101,80 +104,81 @@ function harness(): Harness {
 	};
 }
 
-describe("/provider test", () => {
-	it("chat-tests every configured model in one run", async () => {
+function withAgentDir(fn: (dir: string) => Promise<void>) {
+	return async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pi-provider-test-"));
 		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 		process.env.PI_CODING_AGENT_DIR = dir;
 		try {
+			await fn(dir);
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			rmSync(dir, { recursive: true, force: true });
+		}
+	};
+}
+
+describe("/provider test", () => {
+	it(
+		"picks the provider, then chat-tests every configured model in one run",
+		withAgentDir(async (dir) => {
 			writeRelay(dir);
 			const h = harness();
-			await h.run(["relay", "Test all 3 models"]);
+			await h.run("test", ["relay"]);
 
 			assert.deepEqual(h.chatModels, RELAY_MODELS);
+			assert.equal(h.selectTitles.length, 1); // the provider picker, nothing else
 			const report = h.notifications.join("\n");
 			assert.ok(report.includes("Catalog probe: OK"), report);
-			assert.ok(report.includes("Chat test (model-a): OK"), report);
+			assert.ok(report.includes("Chat test (model-a): OK — replied"), report);
 			assert.ok(report.includes("Chat test (model-b): FAILED"), report);
 			assert.ok(report.includes("Chat test (model-c): OK"), report);
-			assert.deepEqual(h.editorPrefills, []); // no checklist in the "all" path
-		} finally {
-			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
+		}),
+	);
 
-	it("chat-tests only the models picked in the checklist", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "pi-provider-test-"));
-		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-		process.env.PI_CODING_AGENT_DIR = dir;
-		try {
+	it(
+		"tests the provider named on the command line without asking",
+		withAgentDir(async (dir) => {
 			writeRelay(dir);
 			const h = harness();
-			await h.run(["relay", "Select models to test"], "on model-a\noff model-b\non model-c");
+			await h.run("test RELAY", []);
 
-			assert.deepEqual(h.chatModels, ["model-a", "model-c"]);
-			const report = h.notifications.join("\n");
-			assert.ok(report.includes("Chat test (model-a): OK"), report);
-			assert.ok(report.includes("Chat test (model-c): OK"), report);
-			assert.ok(!report.includes("model-b"), report);
-			// Nothing is pre-checked, so the prefill lists every configured model as off.
-			assert.deepEqual(h.editorPrefills, ["off model-a\noff model-b\noff model-c"]);
-		} finally {
-			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
+			assert.deepEqual(h.selectTitles, []);
+			assert.deepEqual(h.chatModels, RELAY_MODELS);
+		}),
+	);
 
-	it("tests the only configured model without asking", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "pi-provider-test-"));
-		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-		process.env.PI_CODING_AGENT_DIR = dir;
-		try {
-			const path = join(dir, "models.json");
+	it(
+		"sends the key pi resolves (e.g. from /login) and the provider's headers",
+		withAgentDir(async (dir) => {
 			writeFileSync(
-				path,
+				join(dir, "models.json"),
 				JSON.stringify({
 					providers: {
 						relay: {
 							baseUrl: "https://relay.test/v1",
 							api: "openai-completions",
+							headers: { "x-team": "$PI_PROVIDER_TEST_TEAM" },
 							models: [{ id: "model-a" }],
 						},
 					},
 				}),
 			);
-			const h = harness();
-			await h.run(["relay"]);
-
-			assert.deepEqual(h.chatModels, ["model-a"]);
-			assert.ok(h.notifications.join("\n").includes("Chat test (model-a): OK"));
-		} finally {
-			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
+			process.env.PI_PROVIDER_TEST_TEAM = "blue";
+			try {
+				const h = harness();
+				await h.run("test relay", [], {
+					getAll: () => [],
+					getProviderAuth: async () => ({ auth: { apiKey: "from-login" } }),
+				});
+				assert.deepEqual(h.chatModels, ["model-a"]);
+				assert.equal(h.chatHeaders[0]!.Authorization, "Bearer from-login");
+				assert.equal(h.chatHeaders[0]!["x-team"], "blue");
+				assert.ok(!h.notifications.join("\n").includes("No API key"), h.notifications.join("\n"));
+			} finally {
+				delete process.env.PI_PROVIDER_TEST_TEAM;
+			}
+		}),
+	);
 });

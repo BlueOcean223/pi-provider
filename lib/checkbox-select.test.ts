@@ -15,7 +15,7 @@ const stubTheme = {
 	hint: (text: string) => text,
 };
 
-function makeList(ids: string[], on: Set<string>) {
+function makeList(ids: string[], on: Set<string>, extras?: ConstructorParameters<typeof MultiSelectList>[7]) {
 	const events: Array<{ type: "change" | "confirm" | "cancel"; id?: string; value?: string }> = [];
 	const items: SettingItem[] = ids.map((id) => ({
 		id,
@@ -31,6 +31,7 @@ function makeList(ids: string[], on: Set<string>) {
 		() => events.push({ type: "cancel" }),
 		() => events.push({ type: "confirm" }),
 		kb,
+		extras,
 	);
 	return { list, items, events };
 }
@@ -89,14 +90,65 @@ describe("MultiSelectList key semantics", () => {
 	});
 });
 
+describe("MultiSelectList Ctrl+A", () => {
+	it("checks every visible row, then unchecks them", () => {
+		const { list, items, events } = makeList(["a", "b", "c"], new Set(["b"]));
+		list.handleInput("\x01");
+		assert.deepEqual(
+			items.map((i) => i.currentValue),
+			["on", "on", "on"],
+		);
+		assert.deepEqual(events, [
+			{ type: "change", id: "a", value: "on" },
+			{ type: "change", id: "c", value: "on" },
+		]);
+		list.handleInput("\x01");
+		assert.deepEqual(
+			items.map((i) => i.currentValue),
+			["off", "off", "off"],
+		);
+	});
+
+	it("only touches rows matching the search", () => {
+		const { list, items } = makeList(["gpt-4o", "gpt-4o-mini", "claude"], new Set());
+		for (const ch of "gpt") list.handleInput(ch);
+		list.handleInput("\x01");
+		assert.deepEqual(
+			items.map((i) => i.currentValue),
+			["on", "on", "off"],
+		);
+	});
+});
+
 describe("MultiSelectList rendering", () => {
 	it("renders [x]/[ ] checkboxes instead of on/off values", () => {
 		const { list } = makeList(["gpt-4o", "gpt-4o-mini"], new Set(["gpt-4o"]));
-		const out = list.render(60).join("\n");
+		const out = list.render(100).join("\n");
 		assert.match(out, /→ \[x\] gpt-4o/);
 		assert.match(out, / {2}\[ \] gpt-4o-mini/);
 		assert.ok(!out.includes("Enter/Space"));
-		assert.ok(out.includes("Space toggle · Enter confirm · Esc cancel"));
+		assert.ok(out.includes("Space toggle · Ctrl+A all · Enter confirm · Esc cancel"), out);
+	});
+
+	it("shows each row's inline detail in an aligned column", () => {
+		const details = new Map([
+			["gpt-4o", "128k ctx"],
+			["gpt-4o-mini", "new · 128k ctx"],
+		]);
+		const { list } = makeList(["gpt-4o", "gpt-4o-mini"], new Set(), { detailFor: (id) => details.get(id) });
+		const lines = list.render(100);
+		const first = lines.find((line) => line.includes("] gpt-4o ")) ?? "";
+		const second = lines.find((line) => line.includes("gpt-4o-mini")) ?? "";
+		assert.ok(first.includes("128k ctx"), first);
+		assert.equal(first.indexOf("128k ctx"), second.indexOf("new · 128k ctx"));
+	});
+
+	it("renders an inline error until the next toggle", () => {
+		const { list } = makeList(["a"], new Set());
+		list.setError("Select at least one model");
+		assert.ok(list.render(100).join("\n").includes("✗ Select at least one model"));
+		list.handleInput(" ");
+		assert.ok(!list.render(100).join("\n").includes("✗"));
 	});
 
 	it("shows the focused row's description", () => {

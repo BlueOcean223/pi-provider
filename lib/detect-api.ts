@@ -313,6 +313,8 @@ export async function chatPing(options: {
 	api: ProviderApi;
 	model: string;
 	apiKey?: string;
+	/** Provider headers (e.g. from models.json); null removes a default header. */
+	headers?: Record<string, string | null>;
 	signal?: AbortSignal;
 }): Promise<{ ok: boolean; status: number; url: string; detail: string }> {
 	const { api, model } = options;
@@ -320,11 +322,14 @@ export async function chatPing(options: {
 	// unexpected Authorization: Bearer header, so don't send both.
 	const headers: Record<string, string> =
 		api === "google-generative-ai"
-			? options.apiKey?.trim()
-				? { "x-goog-api-key": options.apiKey.trim() }
-				: {}
-			: authHeaders(options.apiKey);
-	if (api === "anthropic-messages") headers["anthropic-version"] = "2023-06-01";
+			? authHeaders(undefined, {
+					...(options.apiKey?.trim() ? { "x-goog-api-key": options.apiKey.trim() } : {}),
+					...options.headers,
+				})
+			: authHeaders(options.apiKey, options.headers);
+	if (api === "anthropic-messages" && !Object.keys(headers).some((h) => h.toLowerCase() === "anthropic-version")) {
+		headers["anthropic-version"] = "2023-06-01";
+	}
 
 	const urls = chatUrls(options.baseUrl, api, model);
 	let last: { status: number; url: string; detail: string } | undefined;

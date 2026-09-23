@@ -6,7 +6,16 @@ import {
 	keyHint,
 	rawKeyHint,
 } from "@earendil-works/pi-coding-agent";
-import { Container, type Editor, getKeybindings, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import {
+	Container,
+	type Editor,
+	type Focusable,
+	getKeybindings,
+	Input,
+	Spacer,
+	Text,
+	type TUI,
+} from "@earendil-works/pi-tui";
 
 /**
  * Wrap-around single select + editor, replacing pi's host dialogs which clamp
@@ -33,6 +42,7 @@ class WrapSelectComponent extends Container {
 		escLabel: string,
 		onSelect: (value: string) => void,
 		onCancel: () => void,
+		initialIndex = 0,
 	) {
 		super();
 		this.tui = tui;
@@ -40,6 +50,7 @@ class WrapSelectComponent extends Container {
 		this.options = options;
 		this.onSelect = onSelect;
 		this.onCancel = onCancel;
+		this.selectedIndex = Math.min(Math.max(initialIndex, 0), Math.max(options.length - 1, 0));
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
 		this.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 0));
@@ -101,7 +112,11 @@ export async function loopSelect(
 	ctx: ExtensionCommandContext,
 	title: string,
 	options: string[],
-	opts?: { escLabel?: "cancel" | "back" },
+	opts?: {
+		escLabel?: "cancel" | "back";
+		/** Option the cursor starts on (e.g. the current value when editing). */
+		initial?: string;
+	},
 ): Promise<string | undefined> {
 	if (options.length === 0) return undefined;
 	if (ctx.mode !== "tui") {
@@ -114,6 +129,154 @@ export async function loopSelect(
 			title,
 			options,
 			opts?.escLabel ?? "cancel",
+			(value) => done(value),
+			() => done(undefined),
+			opts?.initial ? options.indexOf(opts.initial) : 0,
+		);
+	});
+}
+
+export interface LoopInputOptions {
+	/** Editable starting value — e.g. what was entered before going back a step. */
+	initial?: string;
+	/** Dim example shown while the field is empty. */
+	placeholder?: string;
+	/** Muted lines under the title explaining the accepted formats. */
+	hint?: string[];
+	/** Return an error to keep the dialog open (shown inline), or undefined to accept. */
+	validate?: (value: string) => string | undefined;
+	escLabel?: "cancel" | "back";
+}
+
+/**
+ * Single-line input with a real prefill and placeholder.
+ *
+ * pi's ui.input ignores its placeholder argument and has no public prefill
+ * (ExtensionInputComponent never reads `_placeholder`, and showExtensionInput
+ * forwards only `{ tui, timeout }`), so stepping back through a wizard used to
+ * show an empty field. Validation errors render inline instead of as notify
+ * lines, so nothing lands in the chat log.
+ */
+class LoopInputComponent extends Container implements Focusable {
+	private readonly input: Input;
+	private readonly errorText = new Text("", 1, 0);
+	private readonly theme: Theme;
+	private readonly tui: TUI;
+	private readonly validate?: (value: string) => string | undefined;
+	private readonly onSubmit: (value: string) => void;
+	private readonly onCancel: () => void;
+	private _focused = false;
+
+	get focused(): boolean {
+		return this._focused;
+	}
+
+	set focused(value: boolean) {
+		this._focused = value;
+		this.input.focused = value;
+	}
+
+	constructor(
+		tui: TUI,
+		theme: Theme,
+		title: string,
+		opts: LoopInputOptions,
+		onSubmit: (value: string) => void,
+		onCancel: () => void,
+	) {
+		super();
+		this.tui = tui;
+		this.theme = theme;
+		this.validate = opts.validate;
+		this.onSubmit = onSubmit;
+		this.onCancel = onCancel;
+
+		this.input = new Input({
+			placeholder: opts.placeholder,
+			placeholderStyle: (text) => theme.fg("dim", text),
+		});
+		if (opts.initial) {
+			this.input.setValue(opts.initial);
+			// setValue clamps the old cursor (0), so typing would land before the
+			// prefilled text. Start at the end like any prefilled field. Private
+			// pi-tui field: if it's renamed, the cursor just stays at the start.
+			const internals = this.input as unknown as { cursor?: number };
+			if (typeof internals.cursor === "number") internals.cursor = opts.initial.length;
+		}
+
+		this.addChild(new DynamicBorder());
+		this.addChild(new Spacer(1));
+		this.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 0));
+		for (const line of opts.hint ?? []) {
+			this.addChild(new Text(theme.fg("muted", line), 1, 0));
+		}
+		this.addChild(new Spacer(1));
+		this.addChild(this.input);
+		this.addChild(this.errorText);
+		this.addChild(new Spacer(1));
+		this.addChild(
+			new Text(
+				`${keyHint("tui.select.confirm", "submit")}  ${keyHint("tui.select.cancel", opts.escLabel ?? "back")}`,
+				1,
+				0,
+			),
+		);
+		this.addChild(new Spacer(1));
+		this.addChild(new DynamicBorder());
+	}
+
+	handleInput(keyData: string): void {
+		const kb = getKeybindings();
+		if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
+			const value = this.input.getValue();
+			const error = this.validate?.(value);
+			if (error) {
+				this.errorText.setText(this.theme.fg("error", `✗ ${error}`));
+				this.tui.requestRender();
+				return;
+			}
+			this.onSubmit(value);
+			return;
+		}
+		if (kb.matches(keyData, "tui.select.cancel")) {
+			this.onCancel();
+			return;
+		}
+		this.input.handleInput(keyData);
+		this.errorText.setText("");
+		this.tui.requestRender();
+	}
+}
+
+/**
+ * Text input with prefill, placeholder and inline validation.
+ * Resolves the entered text, or undefined on Esc.
+ *
+ * Outside the TUI, ui.input can't prefill, so the initial value is offered as
+ * the placeholder and an empty answer keeps it.
+ */
+export async function loopInput(
+	ctx: ExtensionCommandContext,
+	title: string,
+	opts: LoopInputOptions = {},
+): Promise<string | undefined> {
+	if (ctx.mode !== "tui") {
+		const heading = opts.hint?.length ? `${title}\n${opts.hint.join("\n")}` : title;
+		while (true) {
+			const raw = await ctx.ui.input(heading, opts.initial || opts.placeholder);
+			if (raw === undefined) return undefined;
+			const value = raw === "" && opts.initial ? opts.initial : raw;
+			const error = opts.validate?.(value);
+			if (!error) return value;
+			ctx.ui.notify(error, "error");
+		}
+	}
+	return ctx.ui.custom<string | undefined>((tui, theme, _kb, done) => {
+		return new LoopInputComponent(
+			tui,
+			theme,
+			title,
+			opts,
 			(value) => done(value),
 			() => done(undefined),
 		);
