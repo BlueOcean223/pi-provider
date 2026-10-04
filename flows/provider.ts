@@ -85,7 +85,7 @@ function detailEntries(cfg: ProviderConfig): MenuEntry[] {
 		entries.push({ separator: true });
 		entries.push({ id: "models", label: "Models", value: `${models} configured` });
 		if (canAddModels(cfg)) entries.push({ id: "manual", label: "Add model ids manually", kind: "action" });
-		if (models > 0) entries.push({ id: "sync", label: "Sync metadata from pi's catalog", kind: "action" });
+		if (models > 0) entries.push({ id: "sync", label: "Sync metadata from endpoint and pi's catalog", kind: "action" });
 	}
 
 	entries.push({ separator: true });

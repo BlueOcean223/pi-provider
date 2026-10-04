@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { DiscoveredModel } from "../lib/detect-api.ts";
 import {
 	listProviderIds,
 	modelsFileHasJsonc,
@@ -344,12 +345,12 @@ export interface EnrichedModels {
 
 export function enrichModels(
 	catalog: OfficialModelMeta[],
-	ids: Array<{ id: string; name?: string }>,
+	ids: DiscoveredModel[],
 	api: ProviderApi | undefined,
 ): EnrichedModels {
 	let matched = 0;
 	const entries = ids.map((model) => {
-		const result = enrichModelEntry(catalog, model.id, api, model.name);
+		const result = enrichModelEntry(catalog, model.id, api, model.name, model);
 		if (result.status === "matched") matched++;
 		return result.entry;
 	});

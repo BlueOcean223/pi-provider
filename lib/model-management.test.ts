@@ -5,6 +5,7 @@ import {
 	formatRefreshChange,
 	mergeModelAdditions,
 	refreshModelEntries,
+	refreshWithDiscovery,
 	removeModelEntries,
 } from "./model-management.ts";
 import type { ModelEntry } from "./types.ts";
@@ -207,6 +208,23 @@ describe("refreshModelEntries", () => {
 		refreshModelEntries(existing, enrich);
 
 		assert.deepEqual(existing, snapshot);
+	});
+});
+
+describe("refreshWithDiscovery", () => {
+	it("updates only endpoint metadata on unmatched configured models, retaining custom fields", () => {
+		const existing: ModelEntry[] = [
+			{ id: "local", reasoning: true, contextWindow: 128000, maxTokens: 16384, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+			{ id: "not-listed", contextWindow: 50000 },
+		];
+		const result = refreshWithDiscovery(existing, [], [{ id: "local", contextWindow: 262144,
+			maxTokens: 65536, input: ["text", "image"] }]);
+		assert.equal(result.models[0]?.contextWindow, 262144);
+		assert.equal(result.models[0]?.maxTokens, 65536);
+		assert.deepEqual(result.models[0]?.input, ["text", "image"]);
+		assert.equal(result.models[0]?.reasoning, true);
+		assert.deepEqual(result.models[0]?.cost, existing[0]?.cost);
+		assert.deepEqual(result.models[1], existing[1]);
 	});
 });
 

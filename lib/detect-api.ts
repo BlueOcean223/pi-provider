@@ -66,17 +66,56 @@ async function tryFetchJson(
 	}
 }
 
-function parseOpenAIModels(json: unknown): Array<{ id: string; name?: string }> {
+export interface DiscoveredModel {
+	id: string;
+	name?: string;
+	contextWindow?: number;
+	maxTokens?: number;
+	input?: Array<"text" | "image">;
+}
+
+/** Reject missing, invalid and non-positive limits; do not mistake 0 for a usable limit. */
+function positiveLimit(value: unknown): number | undefined {
+	const number = typeof value === "string" && /^[1-9]\d*$/.test(value) ? Number(value) : value;
+	return typeof number === "number" && Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+
+function object(value: unknown): Record<string, unknown> {
+	return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function inputModalities(value: unknown): DiscoveredModel["input"] {
+	if (!Array.isArray(value)) return undefined;
+	const input = Array.from(new Set(value.filter((m): m is "text" | "image" => m === "text" || m === "image")));
+	return input.length ? input : undefined;
+}
+
+/** Keep discovery independent of the model catalog; merge the two when writing. */
+export function parseOpenAIModels(json: unknown): DiscoveredModel[] {
 	if (!json || typeof json !== "object") return [];
 	const data = (json as { data?: unknown }).data;
 	if (!Array.isArray(data)) return [];
-	const out: Array<{ id: string; name?: string }> = [];
+	const out: DiscoveredModel[] = [];
 	for (const item of data) {
-		if (!item || typeof item !== "object") continue;
-		const id = (item as { id?: unknown }).id;
+		const model = object(item);
+		const id = model.id;
 		if (typeof id !== "string" || !id) continue;
-		const name = (item as { name?: unknown }).name;
-		out.push({ id, name: typeof name === "string" ? name : undefined });
+		const info = object(model.model_info);
+		const architecture = object(model.architecture);
+		const name = model.name;
+		const contextWindow = positiveLimit(model.context_window)
+			?? positiveLimit(model.context_length)
+			?? positiveLimit(info.max_input_tokens)
+			?? positiveLimit(model.max_tokens);
+		const maxTokens = positiveLimit(model.max_output_tokens) ?? positiveLimit(info.max_output_tokens);
+		const input = inputModalities(architecture.input_modalities) ?? inputModalities(info.input_modalities);
+		out.push({
+			id,
+			name: typeof name === "string" ? name : undefined,
+			...(contextWindow ? { contextWindow } : {}),
+			...(maxTokens ? { maxTokens } : {}),
+			...(input ? { input } : {}),
+		});
 	}
 	return out;
 }
@@ -124,7 +163,7 @@ export async function listOpenAIModels(options: {
 	headers?: Record<string, string | null>;
 	signal?: AbortSignal;
 }): Promise<{
-	models: Array<{ id: string; name?: string }>;
+	models: DiscoveredModel[];
 	tried: string[];
 	matchedUrl?: string;
 	error?: string;

@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { DiscoveredModel } from "./detect-api.ts";
 import type { ModelEntry, ProviderApi } from "./types.ts";
 
 /** Subset of pi official model fields we copy onto relay models. */
@@ -328,6 +329,7 @@ export function enrichModelEntry(
 	relayId: string,
 	preferredApi?: ProviderApi,
 	relayName?: string,
+	relay?: DiscoveredModel,
 ): EnrichResult {
 	const official = matchOfficialModel(catalog, relayId, preferredApi);
 
@@ -337,9 +339,12 @@ export function enrichModelEntry(
 				id: relayId,
 				...(relayName && relayName !== relayId ? { name: relayName } : {}),
 				...DEFAULT_META,
+				...(relay?.contextWindow ? { contextWindow: relay.contextWindow } : {}),
+				...(relay?.maxTokens ? { maxTokens: relay.maxTokens } : {}),
+				...(relay?.input ? { input: relay.input } : {}),
 			},
 			status: "default",
-			detail: "no official match · defaults 128k",
+			detail: relay?.contextWindow || relay?.maxTokens ? "no official match · relay metadata" : "no official match · defaults 128k",
 		};
 	}
 
@@ -352,9 +357,9 @@ export function enrichModelEntry(
 		id: relayId, // always the id the relay expects
 		name: official.name ?? relayName ?? relayId,
 		reasoning: official.reasoning ?? false,
-		input: official.input ?? ["text"],
-		contextWindow: official.contextWindow ?? DEFAULT_META.contextWindow,
-		maxTokens: official.maxTokens ?? DEFAULT_META.maxTokens,
+		input: relay?.input ?? official.input ?? ["text"],
+		contextWindow: relay?.contextWindow ?? official.contextWindow ?? DEFAULT_META.contextWindow,
+		maxTokens: relay?.maxTokens ?? official.maxTokens ?? DEFAULT_META.maxTokens,
 		cost: official.cost
 			? {
 					input: official.cost.input ?? 0,
