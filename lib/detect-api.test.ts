@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { chatPing, listOpenAIModels } from "./detect-api.ts";
+import { chatPing, listOpenAIModels, parseOpenAIModels } from "./detect-api.ts";
 
 interface Call {
 	url: string;
@@ -53,6 +53,38 @@ describe("listOpenAIModels", () => {
 		assert.equal(calls[0]!.headers.Authorization, undefined);
 		assert.equal(calls[0]!.headers["x-api-key"], "header-key");
 		assert.equal(calls[0]!.headers["x-relay-scope"], "models");
+	});
+
+	it("uses advertised context, output and input modalities in priority order", () => {
+		const [model] = parseOpenAIModels({ data: [{
+			id: "vision-model",
+			context_window: 262144,
+			context_length: 131072,
+			max_tokens: 64000,
+			max_output_tokens: 65536,
+			architecture: { input_modalities: ["text", "image", "audio", "image"] },
+			model_info: { max_input_tokens: 32000, max_output_tokens: 8192, input_modalities: ["text"] },
+		}] });
+		assert.deepEqual(model, {
+			id: "vision-model", name: undefined, contextWindow: 262144,
+			maxTokens: 65536, input: ["text", "image"],
+		});
+	});
+
+	it("falls through missing and invalid fields without guessing from model ids", () => {
+		const models = parseOpenAIModels({ data: [
+			{ id: "named-128k", context_window: 0, context_length: "262144", model_info: { max_output_tokens: 65536 } },
+			{ id: "nested", model_info: { max_input_tokens: 131072, input_modalities: ["image"] } },
+			{ id: "flat", max_tokens: 4096, max_output_tokens: -1, model_info: { max_output_tokens: 1024 } },
+			{ id: "unknown", context_window: "oops", max_tokens: -42, max_output_tokens: 0 },
+		] });
+		assert.equal(models[0]?.contextWindow, 262144);
+		assert.equal(models[0]?.maxTokens, 65536);
+		assert.equal(models[1]?.contextWindow, 131072);
+		assert.deepEqual(models[1]?.input, ["image"]);
+		assert.equal(models[2]?.contextWindow, 4096);
+		assert.equal(models[2]?.maxTokens, 1024);
+		assert.deepEqual(models[3], { id: "unknown", name: undefined });
 	});
 });
 

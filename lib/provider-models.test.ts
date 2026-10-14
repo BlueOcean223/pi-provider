@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import extension from "../index.ts";
+import { syncMetadata } from "../flows/models.ts";
 
 describe("/provider models", () => {
 	it("discovers and additively merges new models into an existing provider", async () => {
@@ -45,7 +46,8 @@ describe("/provider models", () => {
 					JSON.stringify({
 						data: [
 							{ id: "model-a" },
-							{ id: "model-b" },
+							{ id: "model-b", context_window: 262144, max_output_tokens: 65536,
+								architecture: { input_modalities: ["text", "image", "audio"] } },
 							{ id: "model-b" },
 							{ id: "model-c" },
 						],
@@ -113,7 +115,45 @@ describe("/provider models", () => {
 				compat: { custom: true },
 			});
 			assert.equal(saved.providers.relay.models[1].api, "openai-completions");
+			assert.equal(saved.providers.relay.models[1].contextWindow, 262144);
+			assert.equal(saved.providers.relay.models[1].maxTokens, 65536);
+			assert.deepEqual(saved.providers.relay.models[1].input, ["text", "image"]);
 			assert.deepEqual(notifications, ["Added 1 model(s) on relay"]);
+		} finally {
+			globalThis.fetch = previousFetch;
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("manually syncs endpoint metadata for an existing model without a catalog match", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-provider-sync-"));
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const previousFetch = globalThis.fetch;
+		process.env.PI_CODING_AGENT_DIR = dir;
+		try {
+			const path = join(dir, "models.json");
+			writeFileSync(path, JSON.stringify({ providers: { relay: {
+				baseUrl: "https://relay.test/v1", api: "openai-completions", apiKey: "dummy",
+				models: [{ id: "custom", contextWindow: 128000, maxTokens: 16384, reasoning: true }],
+			} } }));
+			globalThis.fetch = async () => Response.json({ data: [{ id: "custom", context_window: 262144,
+				max_output_tokens: 65536, architecture: { input_modalities: ["text", "image"] } }] });
+			const result = await syncMetadata({ ctx: {
+				mode: "rpc",
+				modelRegistry: { getAll: () => [], refresh: async () => ({ errors: new Map() }) },
+				ui: { select: async (_title: string, choices: string[]) => {
+					assert.ok(choices.includes("Apply changes"));
+					return "Apply changes";
+				} },
+			} } as never, "relay");
+			assert.equal(result?.tone, "success");
+			const model = JSON.parse(readFileSync(path, "utf8")).providers.relay.models[0];
+			assert.equal(model.contextWindow, 262144);
+			assert.equal(model.maxTokens, 65536);
+			assert.deepEqual(model.input, ["text", "image"]);
+			assert.equal(model.reasoning, true);
 		} finally {
 			globalThis.fetch = previousFetch;
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

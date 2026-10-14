@@ -72,7 +72,7 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 - API protocol is always picked manually, never guessed: OpenAI Chat Completions, Anthropic Messages, OpenAI Responses, Google Generative AI
 - API key in one field: paste a key to store it, type `$NAME` to reference an environment variable, or leave it empty and use `/login` later. Literal keys are never shown back (`sk-…abcd`)
 - Fetches the relay's `GET /v1/models` automatically and opens a checklist with each model's context / thinking metadata on its row (type to search, Space toggles, Ctrl+A toggles everything visible)
-- Auto-enriches selected models against the **official pi model catalog** — fills in `contextWindow`, `maxTokens`, `reasoning`, `thinkingLevelMap`, `cost`, etc.; falls back to sane defaults (128k context) when no match is found
+- Auto-enriches selected models against the **official pi model catalog** for reasoning, cost, etc.; advertised endpoint limits and text/image capabilities take precedence over catalog values, with 128k context / 16384 output as the final fallback
 - Forwards model-level Anthropic `compat` flags (e.g. `forceAdaptiveThinking` for Claude Opus/Sonnet 4.6) so relay copies of those models negotiate thinking the same way as the official endpoint
 - **Save and test**: saving runs the test panel right away; press Enter on a passing model to switch the session to it
 - **Tests use pi's own request path** (`modelRegistry.streamSimple`): the same credentials (including `/login` and provider `headers`), URL building, compat flags and request shape as a real session — the system prompt goes out as the `developer` role for reasoning models, with `reasoning_effort`
@@ -81,7 +81,7 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 - **One model list per provider**: configured models start checked, models the relay lists but you haven't added are marked `new`, configured models the relay no longer lists are flagged; toggling builds a `+`/`-` diff that is confirmed and written in one go
 - Local server presets: Ollama, LM Studio, vLLM
 - Can route a built-in provider through a relay by overriding just its `baseUrl`, without touching its model list
-- Can re-sync configured models with pi's official catalog (picks up upstream fixes like new `compat` flags without touching ids, custom names, or hand-edited fields)
+- Can re-sync configured models with the endpoint and pi's official catalog (picks up advertised limits and upstream fixes like new `compat` flags without touching ids or custom names)
 - Writes `models.json` atomically (temp file + rename) with permissions tightened to `0600` where possible; each write re-reads the file first, so edits made meanwhile survive
 - No runtime dependencies of its own: `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` are provided by your pi install
 
@@ -128,7 +128,7 @@ A provider's page lists its settings; Enter on a row edits it and writes the cha
 - **Base URL**, **Protocol**, **Display name**
 - **API key** — Enter replaces it (empty keeps the stored key); `x` removes it (asks first for a stored literal key)
 - **Compat** (OpenAI protocols) — presets, or edit the flags as JSON
-- **Models** — the combined model list (see below); **Add model ids manually**; **Sync metadata from pi's catalog**
+- **Models** — the combined model list (see below); **Add model ids manually**; **Sync metadata from endpoint and pi's catalog**
 - **Test connection**, **View JSON**, **Delete provider**
 
 ### `/provider add`
@@ -139,7 +139,7 @@ A provider's page lists its settings; Enter on a row edits it and writes the cha
 4. **Models** — the catalog is fetched automatically (OpenAI-style `{ data: [{ id }] }`, independent of the chat protocol; tries `{baseUrl}/v1/models`, `{baseUrl}/models`, `{baseUrl}/api/v1/models` in an order that depends on whether `baseUrl` already ends in `/v1`). Select at least one. If the relay can't list models, an editor opens with the reason so you can type ids instead
 5. **Review** — every field on one page with the id suggested from the host (`api.relay-one.com` → `relay-one`). The suggestion never reuses an id in `models.json`, a provider pi already has (`deepseek`, `openai`, …) or a sub-command name; it appends `-2`, `-3` instead. Typing a built-in id on purpose shows a warning: pi merges the entry into its own provider, and that provider's built-in models also go to this base URL. Enter on a row edits it; **Models** goes back to the checklist. **Save and test** writes the provider and opens the test panel
 
-Every selected model id is matched against the **official pi model catalog** (taken live from pi's model registry, so it works in every install mode and reflects pi's remote catalog refreshes): a match copies over the official `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` fields (the `id` itself always stays the relay's own), while a miss falls back to defaults (128k context, non-reasoning, zero cost). For Anthropic-API models, model-level `compat` flags that describe the model's own request quirks (e.g. `forceAdaptiveThinking`, `supportsStrictTools`) are copied too; gateway/session-routing flags are deliberately left out.
+Every selected model id is matched against the **official pi model catalog** (taken live from pi's model registry): a match supplies reasoning, thinking, cost and other metadata. When the endpoint advertises metadata, it takes precedence for `contextWindow` (`context_window`, `context_length`, `model_info.max_input_tokens`, `max_tokens`), `maxTokens` (`max_output_tokens`, `model_info.max_output_tokens`) and text/image capabilities (`architecture.input_modalities`, `model_info.input_modalities`). Missing fields use the catalog match or the defaults (128k context, 16384 output, text input). The `id` stays the endpoint's own. For Anthropic-API models, model-level `compat` flags that describe the model's own request quirks (e.g. `forceAdaptiveThinking`, `supportsStrictTools`) are copied too; gateway/session-routing flags are deliberately left out.
 
 There is no compat question up front: pi's docs ask for compat flags to describe verified differences, so the test panel suggests the right flag when a relay actually rejects something.
 
@@ -151,9 +151,9 @@ Pick Ollama (`localhost:11434/v1`), LM Studio (`localhost:1234/v1`) or vLLM (`lo
 
 One checklist for the provider: configured models start checked; models the relay lists but the provider lacks start unchecked and are marked `new`; configured models the relay no longer lists are marked `not listed by relay`. Uncheck to remove, check to add, then confirm the `+`/`-` diff.
 
-Additions are enriched from pi's official catalog; existing entries and hand-edited metadata are preserved exactly, and nothing is removed unless you uncheck it. Models a built-in provider already inherits never show up as new. The provider's saved key and headers are used for the catalog request. `baseUrl`-only proxy overrides can't add models without a protocol, but models already configured on them can still be removed.
+Additions are enriched from endpoint metadata and pi's official catalog; existing entries and hand-edited metadata are preserved exactly, and nothing is removed unless you uncheck it. Models a built-in provider already inherits never show up as new. The provider's saved key and headers are used for the catalog request. `baseUrl`-only proxy overrides can't add models without a protocol, but models already configured on them can still be removed.
 
-**Sync metadata from pi's catalog** (on the provider page) re-enriches every configured model and shows a field-level diff (`model: field old → new`) before writing. Only catalog-managed fields are updated (`reasoning`, `thinkingLevelMap`, `input`, `contextWindow`, `maxTokens`, `cost`, `compat`); ids, custom `name`s, `api` overrides and unknown keys are preserved, and models with no official match are kept as-is.
+**Sync metadata from endpoint and pi's catalog** (on the provider page) re-enriches configured models and shows a field-level diff (`model: field old → new`) before writing. Endpoint limits and input modalities take precedence; only metadata fields are updated (`reasoning`, `thinkingLevelMap`, `input`, `contextWindow`, `maxTokens`, `cost`, `compat`). Ids, custom `name`s, `api` overrides and unknown keys are preserved. Without endpoint metadata or an official match, hand-tuned fields remain unchanged.
 
 ### `/provider test`
 
@@ -268,7 +268,7 @@ Run the tests with `bun run test` and the type check with `bun run typecheck`. T
 
 - The models.json path honors `PI_CODING_AGENT_DIR` (same as pi itself); the default is `~/.pi/agent/models.json`
 - Like pi, this extension accepts `//` comments and trailing commas in `models.json` — but they are dropped when it rewrites the file (screens that write show a warning when the file has them)
-- Model metadata comes from pi's live model registry (`ctx.modelRegistry`), so enrichment works in every install mode; if the registry is somehow empty, models fall back to default metadata
+- The official catalog is read from pi's live model registry (`ctx.modelRegistry`); endpoint metadata is used when advertised. Missing fields fall back to catalog values and then defaults.
 - After each write the registry is reloaded (no network), so `/model` and model switching see the change at once
 - Sub-commands need dialog-capable UI (`ctx.hasUI`: TUI or RPC hosts). In RPC mode lists become selects, the model checklist becomes an editor-based on/off list, the test panel reports through one notification, and the panel's keys (switch, compat fix, remove failed) aren't available. Fully non-interactive runs error out immediately and print the `models.json` path
 

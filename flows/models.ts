@@ -1,11 +1,11 @@
 import { type CheckboxItem, checkboxSelect } from "../lib/checkbox-select.ts";
-import { listOpenAIModels } from "../lib/detect-api.ts";
+import { listOpenAIModels, type DiscoveredModel } from "../lib/detect-api.ts";
 import { loopEditor, withSpinner } from "../lib/loop-ui.ts";
 import {
 	findNewRelayModels,
 	formatRefreshChange,
 	mergeModelAdditions,
-	refreshModelEntries,
+	refreshWithDiscovery,
 	removeModelEntries,
 } from "../lib/model-management.ts";
 import { getModelsPath, readModelsFile, upsertProvider, writeModelsFile } from "../lib/models-json.ts";
@@ -144,7 +144,7 @@ export async function manageModels(env: Env, providerId: string): Promise<Notice
 	}
 
 	const notes: string[] = [];
-	let listed: Array<{ id: string; name?: string }> = [];
+	let listed: DiscoveredModel[] = [];
 	let relayListed = false;
 	if (canDiscover) {
 		// models.json may have changed since the registry was last loaded; the
@@ -179,13 +179,13 @@ export async function manageModels(env: Env, providerId: string): Promise<Notice
 			return { id, label: id, detail: `${name}${modelMeta(entry)}${gone}`, checked: true };
 		}),
 		...candidates.map((m) => {
-			const enriched = enrichModelEntry(catalog, m.id, api, m.name);
+			const enriched = enrichModelEntry(catalog, m.id, api, m.name, m);
 			const source = enriched.status === "matched" ? "" : " · no catalog match";
 			return {
 				id: m.id,
 				label: m.id,
 				detail: `new · ${modelMeta(enriched.entry)}${source}`,
-				description: enriched.matched ? `metadata from ${enriched.matched}` : "metadata: defaults (128k context)",
+				description: enriched.matched ? `catalog: ${enriched.matched} · endpoint limits override` : `metadata: ${enriched.detail}`,
 				checked: false,
 			};
 		}),
@@ -251,7 +251,7 @@ export async function addModelIdsManually(env: Env, providerId: string): Promise
 }
 
 /**
- * Re-enrich configured models against pi's live catalog. Only catalog-managed
+ * Re-enrich configured models against the relay's discovery metadata and pi's catalog. Only metadata
  * fields change; ids, custom names and unknown keys are preserved. Shows a
  * field-level diff before writing.
  */
@@ -263,20 +263,25 @@ export async function syncMetadata(env: Env, providerId: string): Promise<Notice
 	if (!cfg.models?.length) return { text: `${providerId} has no configured models to sync`, tone: "muted" };
 
 	const catalog = officialCatalog(ctx, data);
-	if (catalog.length === 0) return { text: "pi model catalog unavailable — nothing to sync from", tone: "warning" };
-
 	const api = inferProviderApi(cfg);
-	const enrich = (id: string, name?: string) => {
-		const r = enrichModelEntry(catalog, id, api, name);
-		return r.status === "matched" ? r.entry : undefined;
-	};
-	const planned = refreshModelEntries(cfg.models, enrich);
+	const listing = cfg.baseUrl && api
+		? await withSpinner(ctx, `Listing models from ${shortUrl(cfg.baseUrl)}…`, async (signal) => {
+				const auth = await resolveProviderAuth(ctx, providerId, cfg);
+				return listOpenAIModels({ baseUrl: cfg.baseUrl!, apiKey: auth.apiKey, headers: auth.headers, signal });
+			}).catch((err: unknown) => ({ models: [] as DiscoveredModel[], error: errorText(err) }))
+		: undefined;
+	if (cfg.baseUrl && api && listing === undefined) return undefined; // Esc
+	if (catalog.length === 0 && !listing?.models.length) {
+		return { text: `No model metadata available (${listing?.error ?? "catalog unavailable"})`, tone: "warning" };
+	}
+	const listed = listing?.models ?? [];
+	const planned = refreshWithDiscovery(cfg.models, catalog, listed, api);
 	if (planned.changes.length === 0) {
 		const unmatched = planned.unmatchedIds.length;
 		return {
 			text: unmatched
-				? `${providerId} is up to date (${unmatched} model(s) have no catalog match)`
-				: `${providerId} is up to date with pi's catalog`,
+				? `${providerId} is up to date (${unmatched} model(s) lack endpoint/catalog metadata)`
+				: `${providerId} is up to date with endpoint/catalog metadata`,
 			tone: "muted",
 		};
 	}
@@ -287,7 +292,7 @@ export async function syncMetadata(env: Env, providerId: string): Promise<Notice
 		...(lines.length > 14 ? [{ text: `…and ${lines.length - 14} more`, tone: "muted" as const }] : []),
 		{ text: "" },
 		{
-			text: `${planned.changes.length} change(s) across ${new Set(planned.changes.map((c) => c.id)).size} model(s) · ${planned.unmatchedIds.length} without a catalog match (kept as-is)`,
+			text: `${planned.changes.length} change(s) across ${new Set(planned.changes.map((c) => c.id)).size} model(s) · ${planned.unmatchedIds.length} without endpoint/catalog metadata (kept as-is)`,
 			tone: "dim",
 		},
 		...jsoncNotes(),
@@ -306,7 +311,8 @@ export async function syncMetadata(env: Env, providerId: string): Promise<Notice
 	const fresh = readModelsFile();
 	const freshCfg = fresh.providers?.[providerId];
 	if (!freshCfg) return { text: `Provider "${providerId}" no longer exists`, tone: "error" };
-	const merged = refreshModelEntries(freshCfg.models ?? [], enrich);
+	// Reconcile against the latest file, not the state read before the dialog.
+	const merged = refreshWithDiscovery(freshCfg.models ?? [], catalog, listed, api);
 	if (merged.changes.length === 0) return { text: `${providerId} is already up to date`, tone: "muted" };
 	writeModelsFile(upsertProvider(fresh, providerId, { ...freshCfg, models: merged.models }));
 	await refreshRegistry(ctx, providerId);

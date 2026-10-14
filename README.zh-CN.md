@@ -72,7 +72,7 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 - API 协议手动四选一，不做猜测：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses、Google Generative AI
 - API key 只有一个输入框：粘贴 key 即明文保存，输入 `$NAME` 引用环境变量，留空则之后用 `/login`。明文 key 不会再显示出来（显示为 `sk-…abcd`）
 - 自动请求中转站 `GET /v1/models`，打开模型清单，每行带上下文长度 / 是否 thinking（输入即搜索，Space 切换，Ctrl+A 切换当前可见的全部行）
-- 自动对齐 **pi 官方模型目录**，为选中模型补全 `contextWindow`、`maxTokens`、`reasoning`、`thinkingLevelMap`、`cost` 等元数据；匹配不到则回退默认值（128k 上下文）
+- 根据 **pi 官方模型目录** 补全 reasoning、cost 等元数据；端点提供的上下文长度、输出上限及文本/图片能力优先于目录值；两者都没有时回退 128k 上下文 / 16384 输出
 - 转发 Anthropic 模型级 `compat` 标记（如 Claude Opus/Sonnet 4.6 的 `forceAdaptiveThinking`），让中转副本与官方端点以相同方式协商 thinking
 - **保存即测试**：保存后直接打开测试面板；在通过的模型上按回车即把当前会话切到该模型
 - **测试走 pi 自己的请求路径**（`modelRegistry.streamSimple`）：凭据（含 `/login` 与供应商 `headers`）、URL 拼接、compat 标记、请求结构都与真实会话一致——reasoning 模型的系统提示以 `developer` role 发送，并带 `reasoning_effort`
@@ -81,7 +81,7 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 - **每个供应商一张模型清单**：已配置的模型默认勾选，中转站有但尚未添加的标 `new`，已配置但中转站不再列出的会标出来；勾选变化生成 `+`/`-` 差异，确认后一次写入
 - 本地服务预设：Ollama、LM Studio、vLLM
 - 支持只改内置供应商的 `baseUrl`，让它走中转站，不动它的模型列表
-- 可将已配置模型与 pi 官方目录重新对齐——同步上游修复（如新增 `compat` 标记），不影响 id、自定义名称和手动修改的字段
+- 可将已配置模型与端点及 pi 官方目录重新对齐——同步端点公布的上限及上游修复（如新增 `compat` 标记），不影响 id 或自定义名称
 - 写入 `models.json` 采用原子写入（临时文件 + rename），并尽量收紧权限到 `0600`；每次写入前重新读取文件，保留期间其他地方做的修改
 - 无生产依赖：`@earendil-works/pi-coding-agent`、`@earendil-works/pi-tui` 由 pi 运行时提供，装好 pi 即可用
 
@@ -128,7 +128,7 @@ pi -e npm:@blueocean223/pi-provider
 - **Base URL**、**Protocol**、**Display name**
 - **API key**——回车替换（留空保留已存的 key）；`x` 删除 key（明文 key 会先确认）
 - **Compat**（OpenAI 系协议）——预设，或以 JSON 编辑
-- **Models**——合并后的模型清单（见下文）；**Add model ids manually** 手动添加；**Sync metadata from pi's catalog** 同步元数据
+- **Models**——合并后的模型清单（见下文）；**Add model ids manually** 手动添加；**Sync metadata from endpoint and pi's catalog** 同步元数据
 - **Test connection**、**View JSON**、**Delete provider**
 
 ### `/provider add`
@@ -139,7 +139,7 @@ pi -e npm:@blueocean223/pi-provider
 4. **Models**——自动拉取模型目录（OpenAI 风格 `{ data: [{ id }] }`，与聊天协议无关；按 `baseUrl` 是否已含 `/v1` 决定 `{baseUrl}/v1/models`、`{baseUrl}/models`、`{baseUrl}/api/v1/models` 的尝试顺序），至少选一个。中转站列不出模型时，会打开编辑器并写明原因，可以手动输入 model id
 5. **汇总页**——所有字段在一页上，provider id 按域名自动建议（`api.relay-one.com` → `relay-one`）。建议的 id 不会与 `models.json` 里已有的 id、pi 已有的供应商（`deepseek`、`openai` 等）或子命令名重复，重复时依次加 `-2`、`-3`。手动填了内置供应商的 id 会显示警告：pi 会把这条配置并入它自己的供应商，该供应商的内置模型也会改发到这个 base URL。在某行上回车即编辑，**Models** 回到模型清单。**Save and test** 写入并打开测试面板
 
-每个选中的 model id 都会匹配 **pi 官方模型目录**（直接取自 pi 运行中的模型注册表，因此各种安装方式都能用，且包含 pi 的远程目录刷新结果）：匹配到则复制官方的 `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` 等字段（`id` 仍然用中转站自己的），匹配不到则用默认值（128k 上下文、非 reasoning、零成本）。对于 Anthropic 协议的模型，描述模型自身请求特性的 `compat` 标记（如 `forceAdaptiveThinking`、`supportsStrictTools`）也会一并复制；网关/会话路由类标记则有意不复制。
+每个选中的 model id 都会匹配 **pi 官方模型目录**（取自 pi 运行中的模型注册表），以补全 reasoning、thinking、cost 等元数据。如果端点返回更具体的元数据，则 `contextWindow` 优先读取 `context_window`、`context_length`、`model_info.max_input_tokens`、`max_tokens`；`maxTokens` 优先读取 `max_output_tokens`、`model_info.max_output_tokens`；文本/图片能力来自 `architecture.input_modalities` 或 `model_info.input_modalities`。缺少的字段从官方目录获取，再回退默认值（128k 上下文、16384 输出、文本输入）。`id` 始终保留端点的值。Anthropic 模型级 `compat` 标记仍按原逻辑复制，网关/会话路由类标记不会复制。
 
 新增流程不再预先询问 compat：pi 文档要求 compat 标记描述已验证的差异，所以改为在中转站确实拒绝某个字段时，由测试面板给出对应的标记。
 
@@ -151,9 +151,9 @@ pi -e npm:@blueocean223/pi-provider
 
 每个供应商一张清单：已配置的模型默认勾选；中转站列出但尚未配置的模型默认不勾选，标 `new`；已配置但中转站不再列出的模型标 `not listed by relay`。取消勾选即移除，勾选即添加，最后确认 `+`/`-` 差异。
 
-新增的模型从 pi 官方目录补全元数据；已有条目和手动修改过的元数据原样保留，不取消勾选的模型不会被删除。内置供应商本身已有的模型不会显示为 new。请求目录时使用该供应商已保存的 key 和请求头。仅覆盖 `baseUrl` 的代理在没有 API 协议时不能添加模型，但已经配置的自定义模型仍然可以移除。
+新增的模型从端点及 pi 官方目录补全元数据；已有条目和手动修改过的元数据原样保留，不取消勾选的模型不会被删除。内置供应商本身已有的模型不会显示为 new。请求目录时使用该供应商已保存的 key 和请求头。仅覆盖 `baseUrl` 的代理在没有 API 协议时不能添加模型，但已经配置的自定义模型仍然可以移除。
 
-供应商页面上的 **Sync metadata from pi's catalog** 会将所有已配置模型重新与官方目录匹配，写入前展示字段级 diff（`model: field 旧值 → 新值`）。只更新目录管理的字段（`reasoning`、`thinkingLevelMap`、`input`、`contextWindow`、`maxTokens`、`cost`、`compat`）；id、自定义 `name`、`api` 和未知字段都会保留，匹配不到官方目录的模型原样保留。
+供应商页面上的 **Sync metadata from endpoint and pi's catalog** 会依据端点及官方目录重新补全已配置模型，写入前展示字段级 diff（`model: field 旧值 → 新值`）。端点上限和输入能力优先；只更新元数据字段（`reasoning`、`thinkingLevelMap`、`input`、`contextWindow`、`maxTokens`、`cost`、`compat`）。id、自定义 `name`、`api` 和未知字段都会保留；缺少端点元数据且没有官方匹配时，手动设置的字段保持原样。
 
 ### `/provider test`
 
@@ -268,7 +268,7 @@ pi-provider/
 
 - models.json 路径与 pi 本体一致，尊重 `PI_CODING_AGENT_DIR` 环境变量；默认为 `~/.pi/agent/models.json`
 - 与 pi 一致，本扩展接受 `models.json` 中的 `//` 注释与尾逗号——但重写文件时它们会被移除（会写入的界面在文件含注释时会提示）
-- 模型元数据直接取自 pi 运行中的模型注册表（`ctx.modelRegistry`），任何安装方式都能补全；万一注册表为空，所有模型回退默认元数据，不影响正常使用，只是展示的上下文 / 价格不准确
+- 官方目录来自 pi 运行中的模型注册表（`ctx.modelRegistry`）；端点公布的元数据优先使用，缺少的字段再由官方目录和默认值补全。
 - 每次写入后会重新加载注册表（不联网），`/model` 和模型切换立即能看到改动
 - 各子命令需要可弹对话框的 UI（`ctx.hasUI`：TUI 或 RPC 宿主均可）。RPC 模式下列表退化为 select，模型清单退化为编辑器版 on/off 列表，测试面板以一条通知报告结果，面板按键（切换模型、compat 修复、移除失败模型）不可用。完全非交互环境会直接报错并打印 `models.json` 路径
 

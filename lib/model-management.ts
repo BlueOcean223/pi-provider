@@ -1,9 +1,8 @@
-import type { ModelEntry } from "./types.ts";
+import type { ModelEntry, ProviderApi } from "./types.ts";
+import type { DiscoveredModel } from "./detect-api.ts";
+import { enrichModelEntry, type OfficialModelMeta } from "./official-catalog.ts";
 
-export interface RelayModelInfo {
-	id: string;
-	name?: string;
-}
+export type RelayModelInfo = DiscoveredModel;
 
 /**
  * Return relay models that are not configured locally yet.
@@ -167,4 +166,30 @@ export function refreshModelEntries(
 	}
 
 	return { models, changes, unmatchedIds };
+}
+
+/** Sync existing entries: catalog matching remains intact, but endpoint limits
+ * and modalities win when supplied. Unmatched entries retain hand-tuned fields.
+ */
+export function refreshWithDiscovery(
+	existing: ModelEntry[],
+	catalog: OfficialModelMeta[],
+	listed: DiscoveredModel[],
+	api?: ProviderApi,
+): RefreshModelEntriesResult {
+	const byId = new Map(existing.map((model) => [model.id, model]));
+	const discovered = new Map(listed.map((model) => [model.id, model]));
+	return refreshModelEntries(existing, (id, name) => {
+		const relay = discovered.get(id);
+		const result = enrichModelEntry(catalog, id, api, name, relay);
+		if (result.status === "matched") return result.entry;
+		const current = byId.get(id);
+		if (!relay || !current || (!relay.contextWindow && !relay.maxTokens && !relay.input)) return undefined;
+		return {
+			...current,
+			...(relay.contextWindow ? { contextWindow: relay.contextWindow } : {}),
+			...(relay.maxTokens ? { maxTokens: relay.maxTokens } : {}),
+			...(relay.input ? { input: relay.input } : {}),
+		};
+	});
 }

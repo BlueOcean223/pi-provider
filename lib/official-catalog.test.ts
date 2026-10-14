@@ -100,6 +100,31 @@ describe("enrichModelEntry compat forwarding", () => {
 	});
 });
 
+describe("endpoint metadata enrichment", () => {
+	it("keeps the catalog match but prefers endpoint-specific limits and modalities", () => {
+		const relay = { id: opus46.id, contextWindow: 262144, maxTokens: 65536,
+			input: ["text"] as Array<"text" | "image"> };
+		const result = enrichModelEntry([opus46], relay.id, "anthropic-messages", undefined, relay);
+		assert.equal(result.status, "matched");
+		assert.equal(result.matched, "anthropic/claude-opus-4-6");
+		assert.equal(result.entry.contextWindow, 262144);
+		assert.equal(result.entry.maxTokens, 65536);
+		assert.deepEqual(result.entry.input, ["text"]);
+		assert.deepEqual(result.entry.thinkingLevelMap, opus46.thinkingLevelMap);
+		assert.deepEqual(result.entry.cost, opus46.cost);
+		assert.equal(enrichModelEntry([opus46], relay.id).entry.contextWindow, 1_000_000);
+	});
+
+	it("uses defaults only for missing fields without a catalog match", () => {
+		const result = enrichModelEntry([], "unlisted", undefined, undefined,
+			{ id: "unlisted", contextWindow: 262144, input: ["image"] });
+		assert.equal(result.entry.contextWindow, 262144);
+		assert.equal(result.entry.maxTokens, 16384);
+		assert.deepEqual(result.entry.input, ["image"]);
+		assert.equal(enrichModelEntry([], "unlisted").entry.contextWindow, 128000);
+	});
+});
+
 describe("matchOfficialModel", () => {
 	const opus45: OfficialModelMeta = {
 		id: "claude-opus-4-5",
