@@ -103,25 +103,40 @@ describe("enrichModelEntry compat forwarding", () => {
 describe("endpoint metadata enrichment", () => {
 	it("keeps the catalog match but prefers endpoint-specific limits and modalities", () => {
 		const relay = { id: opus46.id, contextWindow: 262144, maxTokens: 65536,
-			input: ["text"] as Array<"text" | "image"> };
+			input: ["text", "image"] as Array<"text" | "image"> };
 		const result = enrichModelEntry([opus46], relay.id, "anthropic-messages", undefined, relay);
 		assert.equal(result.status, "matched");
 		assert.equal(result.matched, "anthropic/claude-opus-4-6");
 		assert.equal(result.entry.contextWindow, 262144);
 		assert.equal(result.entry.maxTokens, 65536);
-		assert.deepEqual(result.entry.input, ["text"]);
+		assert.deepEqual(result.entry.input, ["text", "image"]);
 		assert.deepEqual(result.entry.thinkingLevelMap, opus46.thinkingLevelMap);
 		assert.deepEqual(result.entry.cost, opus46.cost);
-		assert.equal(enrichModelEntry([opus46], relay.id).entry.contextWindow, 1_000_000);
+		assert.equal(result.endpointApplied, true);
+		const catalogOnly = enrichModelEntry([opus46], relay.id);
+		assert.equal(catalogOnly.entry.contextWindow, 1_000_000);
+		assert.equal(catalogOnly.endpointApplied, false);
+	});
+
+	it("lets usable endpoint modalities override the catalog's", () => {
+		const result = enrichModelEntry([opus46], opus46.id, "anthropic-messages", undefined,
+			{ id: opus46.id, input: ["text"] });
+		assert.deepEqual(result.entry.input, ["text"]);
+		assert.equal(result.endpointApplied, true);
 	});
 
 	it("uses defaults only for missing fields without a catalog match", () => {
 		const result = enrichModelEntry([], "unlisted", undefined, undefined,
-			{ id: "unlisted", contextWindow: 262144, input: ["image"] });
+			{ id: "unlisted", contextWindow: 262144, input: ["text", "image"] });
 		assert.equal(result.entry.contextWindow, 262144);
 		assert.equal(result.entry.maxTokens, 16384);
-		assert.deepEqual(result.entry.input, ["image"]);
-		assert.equal(enrichModelEntry([], "unlisted").entry.contextWindow, 128000);
+		assert.deepEqual(result.entry.input, ["text", "image"]);
+		assert.equal(result.endpointApplied, true);
+		assert.equal(result.detail, "no official match · endpoint metadata");
+		const fallback = enrichModelEntry([], "unlisted");
+		assert.equal(fallback.entry.contextWindow, 128000);
+		assert.equal(fallback.endpointApplied, false);
+		assert.equal(fallback.detail, "no official match · defaults 128k");
 	});
 });
 

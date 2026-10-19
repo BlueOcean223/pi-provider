@@ -166,7 +166,11 @@ async function modelsStep(env: Env, draft: Draft): Promise<StepOutcome> {
 			id: m.id,
 			label: m.id,
 			detail: `${modelMeta(r.entry)}${r.status === "matched" ? "" : " · no catalog match"}${origin}`,
-			description: r.matched ? `catalog: ${r.matched} · endpoint limits override` : `metadata: ${r.detail}`,
+			description: r.matched
+				? r.endpointApplied
+					? `catalog: ${r.matched} · endpoint limits override`
+					: `catalog: ${r.matched}`
+				: `metadata: ${r.detail}`,
 			checked: selected.has(m.id),
 		};
 	});

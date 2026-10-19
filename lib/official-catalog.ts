@@ -32,6 +32,8 @@ export interface EnrichResult {
 	/** Short status for UI. */
 	status: "matched" | "default";
 	detail: string;
+	/** At least one limit or modality advertised by the endpoint was applied. */
+	endpointApplied?: boolean;
 }
 
 /**
@@ -332,6 +334,9 @@ export function enrichModelEntry(
 	relay?: DiscoveredModel,
 ): EnrichResult {
 	const official = matchOfficialModel(catalog, relayId, preferredApi);
+	// True only when the endpoint actually advertised usable metadata, so the
+	// UI never claims an endpoint override for a fetch that yielded none.
+	const endpointApplied = Boolean(relay?.contextWindow || relay?.maxTokens || relay?.input);
 
 	if (!official) {
 		return {
@@ -344,7 +349,8 @@ export function enrichModelEntry(
 				...(relay?.input ? { input: relay.input } : {}),
 			},
 			status: "default",
-			detail: relay?.contextWindow || relay?.maxTokens ? "no official match · relay metadata" : "no official match · defaults 128k",
+			endpointApplied,
+			detail: endpointApplied ? "no official match · endpoint metadata" : "no official match · defaults 128k",
 		};
 	}
 
@@ -388,6 +394,7 @@ export function enrichModelEntry(
 		entry,
 		matched: `${official.provider}/${official.id}`,
 		status: "matched",
+		endpointApplied,
 		detail: `${ctxK}k · ${thinkHint} ← ${official.provider}/${official.id}`,
 	};
 }

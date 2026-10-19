@@ -185,7 +185,11 @@ export async function manageModels(env: Env, providerId: string): Promise<Notice
 				id: m.id,
 				label: m.id,
 				detail: `new · ${modelMeta(enriched.entry)}${source}`,
-				description: enriched.matched ? `catalog: ${enriched.matched} · endpoint limits override` : `metadata: ${enriched.detail}`,
+				description: enriched.matched
+					? enriched.endpointApplied
+						? `catalog: ${enriched.matched} · endpoint limits override`
+						: `catalog: ${enriched.matched}`
+					: `metadata: ${enriched.detail}`,
 				checked: false,
 			};
 		}),
@@ -264,24 +268,30 @@ export async function syncMetadata(env: Env, providerId: string): Promise<Notice
 
 	const catalog = officialCatalog(ctx, data);
 	const api = inferProviderApi(cfg);
-	const listing = cfg.baseUrl && api
-		? await withSpinner(ctx, `Listing models from ${shortUrl(cfg.baseUrl)}…`, async (signal) => {
-				const auth = await resolveProviderAuth(ctx, providerId, cfg);
-				return listOpenAIModels({ baseUrl: cfg.baseUrl!, apiKey: auth.apiKey, headers: auth.headers, signal });
-			}).catch((err: unknown) => ({ models: [] as DiscoveredModel[], error: errorText(err) }))
-		: undefined;
-	if (cfg.baseUrl && api && listing === undefined) return undefined; // Esc
-	if (catalog.length === 0 && !listing?.models.length) {
-		return { text: `No model metadata available (${listing?.error ?? "catalog unavailable"})`, tone: "warning" };
+	const canList = Boolean(cfg.baseUrl && api);
+	let listed: DiscoveredModel[] = [];
+	let listingError: string | undefined;
+	if (canList) {
+		const listing = await withSpinner(ctx, `Listing models from ${shortUrl(cfg.baseUrl)}…`, async (signal) => {
+			const auth = await resolveProviderAuth(ctx, providerId, cfg);
+			return listOpenAIModels({ baseUrl: cfg.baseUrl!, apiKey: auth.apiKey, headers: auth.headers, signal });
+		}).catch((err: unknown) => ({ models: [] as DiscoveredModel[], tried: [], error: errorText(err) }));
+		if (listing === undefined) return undefined; // Esc on the spinner
+		listed = listing.models;
+		listingError = listing.error;
 	}
-	const listed = listing?.models ?? [];
+	if (catalog.length === 0 && listed.length === 0) {
+		return { text: `No model metadata available (${listingError ?? "catalog unavailable"})`, tone: "warning" };
+	}
+	// Usable endpoint metadata = at least one model advertises a limit or modality.
+	const endpointMeta = listed.some((m) => m.contextWindow || m.maxTokens || m.input);
 	const planned = refreshWithDiscovery(cfg.models, catalog, listed, api);
 	if (planned.changes.length === 0) {
 		const unmatched = planned.unmatchedIds.length;
 		return {
 			text: unmatched
-				? `${providerId} is up to date (${unmatched} model(s) lack endpoint/catalog metadata)`
-				: `${providerId} is up to date with endpoint/catalog metadata`,
+				? `${providerId} is up to date (${unmatched} model(s) without endpoint/catalog metadata)`
+				: `${providerId} is up to date with ${endpointMeta ? "endpoint/catalog metadata" : "catalog metadata"}`,
 			tone: "muted",
 		};
 	}
@@ -295,10 +305,20 @@ export async function syncMetadata(env: Env, providerId: string): Promise<Notice
 			text: `${planned.changes.length} change(s) across ${new Set(planned.changes.map((c) => c.id)).size} model(s) · ${planned.unmatchedIds.length} without endpoint/catalog metadata (kept as-is)`,
 			tone: "dim",
 		},
+		...(!endpointMeta
+			? [{
+					text: canList
+						? listed.length
+							? "endpoint advertised no metadata for these models — catalog/defaults will be used"
+							: `endpoint metadata unavailable (${listingError ?? "empty response"}) — catalog/defaults will be used`
+						: "no endpoint configured — catalog/defaults will be used",
+					tone: "dim" as const,
+				}]
+			: []),
 		...jsoncNotes(),
 	];
 	const choice = await rowMenu(ctx, {
-		title: `Sync metadata for "${providerId}" from pi's catalog?`,
+		title: `Sync metadata for "${providerId}" from the endpoint and pi's catalog?`,
 		notes,
 		entries: [
 			{ id: "apply", label: "Apply changes", kind: "action" },

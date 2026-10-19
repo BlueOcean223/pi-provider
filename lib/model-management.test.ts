@@ -226,6 +226,22 @@ describe("refreshWithDiscovery", () => {
 		assert.deepEqual(result.models[0]?.cost, existing[0]?.cost);
 		assert.deepEqual(result.models[1], existing[1]);
 	});
+
+	it("leaves unmatched models untouched when the endpoint advertises nothing", () => {
+		const existing: ModelEntry[] = [{ id: "local", contextWindow: 128000, maxTokens: 16384 }];
+		const result = refreshWithDiscovery(existing, [], [{ id: "local" }]);
+		assert.deepEqual(result.models, existing);
+		assert.deepEqual(result.changes, []);
+	});
+
+	it("still updates an unmatched model when the endpoint only advertises modalities", () => {
+		const existing: ModelEntry[] = [{ id: "local", contextWindow: 128000, input: ["text", "image"] }];
+		const result = refreshWithDiscovery(existing, [], [{ id: "local", input: ["text"] }]);
+		assert.deepEqual(result.models[0]?.input, ["text"]);
+		assert.equal(result.models[0]?.contextWindow, 128000);
+		assert.equal(result.changes.length, 1);
+		assert.equal(result.changes[0]?.field, "input");
+	});
 });
 
 describe("formatRefreshChange", () => {

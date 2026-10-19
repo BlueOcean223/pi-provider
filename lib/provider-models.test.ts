@@ -162,6 +162,50 @@ describe("/provider models", () => {
 		}
 	});
 
+	it("falls back to the catalog and says so when the endpoint is unreachable", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-provider-sync-offline-"));
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const previousFetch = globalThis.fetch;
+		process.env.PI_CODING_AGENT_DIR = dir;
+		try {
+			const path = join(dir, "models.json");
+			writeFileSync(path, JSON.stringify({ providers: { relay: {
+				baseUrl: "https://relay.test/v1", api: "openai-completions", apiKey: "dummy",
+				models: [{ id: "claude-sonnet-4", contextWindow: 100000 }],
+			} } }));
+			globalThis.fetch = async () => new Response("unauthorized", { status: 401 });
+			const selectTitles: string[] = [];
+			const result = await syncMetadata({ ctx: {
+				mode: "rpc",
+				modelRegistry: {
+					getAll: () => [{
+						provider: "anthropic", id: "claude-sonnet-4", api: "anthropic-messages",
+						name: "Claude Sonnet 4", contextWindow: 200000, maxTokens: 64000,
+					}],
+					refresh: async () => ({ errors: new Map() }),
+				},
+				ui: { select: async (title: string, choices: string[]) => {
+					selectTitles.push(title);
+					assert.ok(choices.includes("Apply changes"));
+					return "Apply changes";
+				} },
+			} } as never, "relay");
+			assert.equal(result?.tone, "success");
+			const model = JSON.parse(readFileSync(path, "utf8")).providers.relay.models[0];
+			assert.equal(model.contextWindow, 200000);
+			assert.equal(model.maxTokens, 64000);
+			const confirm = selectTitles.find((t) => t.includes("Sync metadata"));
+			assert.ok(confirm, "confirmation dialog was shown");
+			assert.match(confirm!, /endpoint metadata unavailable/);
+			assert.match(confirm!, /catalog\/defaults will be used/);
+		} finally {
+			globalThis.fetch = previousFetch;
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("removes selected custom model entries without changing the others", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pi-provider-models-"));
 		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;

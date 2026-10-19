@@ -56,7 +56,7 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 
    Models        3 configured
    Add model ids manually
-   Sync metadata from pi's catalog
+   Sync metadata from endpoint and pi's catalog
 
    Test connection
    View JSON
@@ -139,7 +139,7 @@ A provider's page lists its settings; Enter on a row edits it and writes the cha
 4. **Models** — the catalog is fetched automatically (OpenAI-style `{ data: [{ id }] }`, independent of the chat protocol; tries `{baseUrl}/v1/models`, `{baseUrl}/models`, `{baseUrl}/api/v1/models` in an order that depends on whether `baseUrl` already ends in `/v1`). Select at least one. If the relay can't list models, an editor opens with the reason so you can type ids instead
 5. **Review** — every field on one page with the id suggested from the host (`api.relay-one.com` → `relay-one`). The suggestion never reuses an id in `models.json`, a provider pi already has (`deepseek`, `openai`, …) or a sub-command name; it appends `-2`, `-3` instead. Typing a built-in id on purpose shows a warning: pi merges the entry into its own provider, and that provider's built-in models also go to this base URL. Enter on a row edits it; **Models** goes back to the checklist. **Save and test** writes the provider and opens the test panel
 
-Every selected model id is matched against the **official pi model catalog** (taken live from pi's model registry): a match supplies reasoning, thinking, cost and other metadata. When the endpoint advertises metadata, it takes precedence for `contextWindow` (`context_window`, `context_length`, `model_info.max_input_tokens`, `max_tokens`), `maxTokens` (`max_output_tokens`, `model_info.max_output_tokens`) and text/image capabilities (`architecture.input_modalities`, `model_info.input_modalities`). Missing fields use the catalog match or the defaults (128k context, 16384 output, text input). The `id` stays the endpoint's own. For Anthropic-API models, model-level `compat` flags that describe the model's own request quirks (e.g. `forceAdaptiveThinking`, `supportsStrictTools`) are copied too; gateway/session-routing flags are deliberately left out.
+Every selected model id is matched against the **official pi model catalog** (taken live from pi's model registry): a match supplies reasoning, thinking, cost and other metadata. When the endpoint advertises metadata, it takes precedence for `contextWindow` (`context_window`, `context_length`, `max_input_tokens`, `model_info.max_input_tokens`), `maxTokens` (`max_output_tokens`, `model_info.max_output_tokens`, `max_tokens`) and text/image capabilities (`architecture.input_modalities`, `model_info.input_modalities` — text is always kept, image only when advertised). The top-level `max_tokens` carries output-token semantics in OpenAI-style and Anthropic model lists, so it is never a context window — only a last-resort fallback for the output limit. Missing fields use the catalog match or the defaults (128k context, 16384 output, text input). The `id` stays the endpoint's own. For Anthropic-API models, model-level `compat` flags that describe the model's own request quirks (e.g. `forceAdaptiveThinking`, `supportsStrictTools`) are copied too; gateway/session-routing flags are deliberately left out.
 
 There is no compat question up front: pi's docs ask for compat flags to describe verified differences, so the test panel suggests the right flag when a relay actually rejects something.
 
@@ -153,7 +153,7 @@ One checklist for the provider: configured models start checked; models the rela
 
 Additions are enriched from endpoint metadata and pi's official catalog; existing entries and hand-edited metadata are preserved exactly, and nothing is removed unless you uncheck it. Models a built-in provider already inherits never show up as new. The provider's saved key and headers are used for the catalog request. `baseUrl`-only proxy overrides can't add models without a protocol, but models already configured on them can still be removed.
 
-**Sync metadata from endpoint and pi's catalog** (on the provider page) re-enriches configured models and shows a field-level diff (`model: field old → new`) before writing. Endpoint limits and input modalities take precedence; only metadata fields are updated (`reasoning`, `thinkingLevelMap`, `input`, `contextWindow`, `maxTokens`, `cost`, `compat`). Ids, custom `name`s, `api` overrides and unknown keys are preserved. Without endpoint metadata or an official match, hand-tuned fields remain unchanged.
+**Sync metadata from endpoint and pi's catalog** (on the provider page) re-enriches configured models and shows a field-level diff (`model: field old → new`) before writing. Endpoint limits and input modalities take precedence; only metadata fields are updated (`reasoning`, `thinkingLevelMap`, `input`, `contextWindow`, `maxTokens`, `cost`, `compat`). Ids, custom `name`s, `api` overrides and unknown keys are preserved. Without endpoint metadata or an official match, hand-tuned fields remain unchanged. If the model list can't be fetched or advertises no metadata, the diff says so and catalog/default values are used.
 
 ### `/provider test`
 

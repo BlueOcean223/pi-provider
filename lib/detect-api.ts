@@ -84,13 +84,39 @@ function object(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+/**
+ * Normalize an endpoint's advertised input modalities.
+ *
+ * Text is always the baseline: a relay that omits it (e.g. `["image", "audio"]`)
+ * must not make pi drop text support. Image is advertised additionally when the
+ * endpoint says so; audio and friends are not supported end-to-end by pi, so
+ * they are ignored. A list with neither text nor image carries no usable
+ * information, so the caller falls back to the catalog/defaults.
+ */
 function inputModalities(value: unknown): DiscoveredModel["input"] {
 	if (!Array.isArray(value)) return undefined;
-	const input = Array.from(new Set(value.filter((m): m is "text" | "image" => m === "text" || m === "image")));
-	return input.length ? input : undefined;
+	const hasImage = value.includes("image");
+	if (!value.includes("text") && !hasImage) return undefined;
+	return hasImage ? ["text", "image"] : ["text"];
 }
 
-/** Keep discovery independent of the model catalog; merge the two when writing. */
+/**
+ * Keep discovery independent of the model catalog; merge the two when writing.
+ *
+ * Beyond the basic `{ data: [{ id }] }` shape, extended metadata is read where
+ * real relays put it, in this precedence:
+ *
+ * - context window: `context_window` → `context_length` → `max_input_tokens`
+ *   → `model_info.max_input_tokens`
+ * - output limit:   `max_output_tokens` → `model_info.max_output_tokens`
+ *   → `max_tokens`
+ * - input modalities: `architecture.input_modalities` → `model_info.input_modalities`
+ *
+ * The top-level `max_tokens` carries output-token semantics in OpenAI-style
+ * and Anthropic model lists, so it is never a context window; it is only a
+ * last-resort fallback for the output limit. Missing, malformed or non-positive
+ * values are skipped so the caller can fall back to the catalog and defaults.
+ */
 export function parseOpenAIModels(json: unknown): DiscoveredModel[] {
 	if (!json || typeof json !== "object") return [];
 	const data = (json as { data?: unknown }).data;
@@ -105,9 +131,11 @@ export function parseOpenAIModels(json: unknown): DiscoveredModel[] {
 		const name = model.name;
 		const contextWindow = positiveLimit(model.context_window)
 			?? positiveLimit(model.context_length)
-			?? positiveLimit(info.max_input_tokens)
+			?? positiveLimit(model.max_input_tokens)
+			?? positiveLimit(info.max_input_tokens);
+		const maxTokens = positiveLimit(model.max_output_tokens)
+			?? positiveLimit(info.max_output_tokens)
 			?? positiveLimit(model.max_tokens);
-		const maxTokens = positiveLimit(model.max_output_tokens) ?? positiveLimit(info.max_output_tokens);
 		const input = inputModalities(architecture.input_modalities) ?? inputModalities(info.input_modalities);
 		out.push({
 			id,

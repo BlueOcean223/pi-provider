@@ -56,7 +56,7 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 
    Models        3 configured
    Add model ids manually
-   Sync metadata from pi's catalog
+   Sync metadata from endpoint and pi's catalog
 
    Test connection
    View JSON
@@ -139,7 +139,7 @@ pi -e npm:@blueocean223/pi-provider
 4. **Models**——自动拉取模型目录（OpenAI 风格 `{ data: [{ id }] }`，与聊天协议无关；按 `baseUrl` 是否已含 `/v1` 决定 `{baseUrl}/v1/models`、`{baseUrl}/models`、`{baseUrl}/api/v1/models` 的尝试顺序），至少选一个。中转站列不出模型时，会打开编辑器并写明原因，可以手动输入 model id
 5. **汇总页**——所有字段在一页上，provider id 按域名自动建议（`api.relay-one.com` → `relay-one`）。建议的 id 不会与 `models.json` 里已有的 id、pi 已有的供应商（`deepseek`、`openai` 等）或子命令名重复，重复时依次加 `-2`、`-3`。手动填了内置供应商的 id 会显示警告：pi 会把这条配置并入它自己的供应商，该供应商的内置模型也会改发到这个 base URL。在某行上回车即编辑，**Models** 回到模型清单。**Save and test** 写入并打开测试面板
 
-每个选中的 model id 都会匹配 **pi 官方模型目录**（取自 pi 运行中的模型注册表），以补全 reasoning、thinking、cost 等元数据。如果端点返回更具体的元数据，则 `contextWindow` 优先读取 `context_window`、`context_length`、`model_info.max_input_tokens`、`max_tokens`；`maxTokens` 优先读取 `max_output_tokens`、`model_info.max_output_tokens`；文本/图片能力来自 `architecture.input_modalities` 或 `model_info.input_modalities`。缺少的字段从官方目录获取，再回退默认值（128k 上下文、16384 输出、文本输入）。`id` 始终保留端点的值。Anthropic 模型级 `compat` 标记仍按原逻辑复制，网关/会话路由类标记不会复制。
+每个选中的 model id 都会匹配 **pi 官方模型目录**（取自 pi 运行中的模型注册表），以补全 reasoning、thinking、cost 等元数据。如果端点返回更具体的元数据，则 `contextWindow` 优先读取 `context_window`、`context_length`、`max_input_tokens`、`model_info.max_input_tokens`；`maxTokens` 优先读取 `max_output_tokens`、`model_info.max_output_tokens`、`max_tokens`；文本/图片能力来自 `architecture.input_modalities` 或 `model_info.input_modalities`（文本能力始终保留，仅当端点声明时才加上 image）。顶层 `max_tokens` 在 OpenAI/Anthropic 模型列表中是输出 token 上限的语义，因此永远不会被当作上下文窗口，只作为输出上限的最后回退。缺少的字段从官方目录获取，再回退默认值（128k 上下文、16384 输出、文本输入）。`id` 始终保留端点的值。Anthropic 模型级 `compat` 标记仍按原逻辑复制，网关/会话路由类标记不会复制。
 
 新增流程不再预先询问 compat：pi 文档要求 compat 标记描述已验证的差异，所以改为在中转站确实拒绝某个字段时，由测试面板给出对应的标记。
 
@@ -153,7 +153,7 @@ pi -e npm:@blueocean223/pi-provider
 
 新增的模型从端点及 pi 官方目录补全元数据；已有条目和手动修改过的元数据原样保留，不取消勾选的模型不会被删除。内置供应商本身已有的模型不会显示为 new。请求目录时使用该供应商已保存的 key 和请求头。仅覆盖 `baseUrl` 的代理在没有 API 协议时不能添加模型，但已经配置的自定义模型仍然可以移除。
 
-供应商页面上的 **Sync metadata from endpoint and pi's catalog** 会依据端点及官方目录重新补全已配置模型，写入前展示字段级 diff（`model: field 旧值 → 新值`）。端点上限和输入能力优先；只更新元数据字段（`reasoning`、`thinkingLevelMap`、`input`、`contextWindow`、`maxTokens`、`cost`、`compat`）。id、自定义 `name`、`api` 和未知字段都会保留；缺少端点元数据且没有官方匹配时，手动设置的字段保持原样。
+供应商页面上的 **Sync metadata from endpoint and pi's catalog** 会依据端点及官方目录重新补全已配置模型，写入前展示字段级 diff（`model: field 旧值 → 新值`）。端点上限和输入能力优先；只更新元数据字段（`reasoning`、`thinkingLevelMap`、`input`、`contextWindow`、`maxTokens`、`cost`、`compat`）。id、自定义 `name`、`api` 和未知字段都会保留；缺少端点元数据且没有官方匹配时，手动设置的字段保持原样。如果模型列表拿不到或端点没有公布元数据，diff 会明确说明，并使用官方目录/默认值。
 
 ### `/provider test`
 
