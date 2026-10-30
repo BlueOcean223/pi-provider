@@ -4,6 +4,7 @@ import {
 	type SettingItem,
 	SettingsList,
 	type SettingsListTheme,
+	sliceByColumn,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
@@ -31,13 +32,15 @@ function fitToWidth(
 	const { indent = "", maxLines = Number.POSITIVE_INFINITY } = options;
 	const safe = text.replace(/\t/g, "  ").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
 	const room = Math.max(1, width - visibleWidth(indent));
-	const wrapped = wrapTextWithAnsi(style(safe), room);
-	if (wrapped.length <= maxLines) {
-		return wrapped.map((line) => truncateToWidth(indent + line, width));
-	}
+	// Wrap first, style each line after: the "…" on a cut note then keeps the
+	// note's colour. truncateToWidth would add it behind a reset, and only when
+	// the last kept line is full, which a word-wrapped line rarely is.
+	const wrapped = wrapTextWithAnsi(safe, room);
 	const kept = wrapped.slice(0, maxLines);
-	kept[maxLines - 1] = truncateToWidth(kept[maxLines - 1]!, Math.max(1, room - 1), "…");
-	return kept.map((line) => truncateToWidth(indent + line, width));
+	if (wrapped.length > maxLines) {
+		kept[maxLines - 1] = `${sliceByColumn(kept[maxLines - 1]!, 0, room - 1, true).trimEnd()}…`;
+	}
+	return kept.map((line) => truncateToWidth(indent + style(line), width));
 }
 
 /** Notes are hints, not logs: three lines keep the room for the list and keys. */

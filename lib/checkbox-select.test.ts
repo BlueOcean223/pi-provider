@@ -268,9 +268,12 @@ describe("checkboxSelect header width", () => {
 
 	it("caps a pathological note so the list and its keys keep their rows", () => {
 		const title = "Models: relay";
-		const notes = noteLines(renderPanel({ width: 30, title, notes: ["x".repeat(300)] }), title);
-		assert.ok(notes.length <= 3, `note used ${notes.length} lines`);
-		assert.ok(notes.at(-1)!.includes("…"), notes.join("\n"));
+		// Unbreakable text fills every line; words leave the last kept line short.
+		for (const note of ["x".repeat(300), "alpha beta gamma delta ".repeat(10)]) {
+			const notes = noteLines(renderPanel({ width: 30, title, notes: [note] }), title);
+			assert.equal(notes.length, 3, notes.join("\n"));
+			assert.ok(notes.at(-1)!.trimEnd().endsWith("…"), notes.join("\n"));
+		}
 	});
 
 	it("wraps styled text without losing the colour or the width bound", () => {
