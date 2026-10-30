@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { KeybindingsManager, type SettingItem, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
+import { KeybindingsManager, type SettingItem, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 import { checkboxSelect, MultiSelectList } from "./checkbox-select.ts";
 import { HOST_ROWS } from "./fit.ts";
 
@@ -190,6 +190,61 @@ describe("checkboxSelect palette", () => {
 		const out = component!.render(100).join("\n");
 		assert.ok(out.includes("<accent>[x] <accent>alpha"), out);
 		assert.ok(out.includes("<dim>[ ] beta"), out);
+	});
+});
+
+describe("checkboxSelect header width", () => {
+	// pi-tui throws when a rendered line is wider than the terminal, and pi exits
+	// with it. The header is built from raw strings, so a relay that answers the
+	// catalog request with an error body used to put a 164-column line into a
+	// 120-column terminal ("Couldn't list relay models ({…})").
+	const relayError = `Couldn't list relay models (${JSON.stringify({
+		code: "INSUFFICIENT_BALANCE",
+		message: "Insufficient account balance / 账户余额不足，请充值后重试",
+	})}) — showing configured models only`;
+
+	function renderHeader(notes: string[], width: number, title = "Models: relay"): string[] {
+		let component: { render(width: number): string[] } | undefined;
+		const tui = { requestRender() {}, terminal: { rows: 40, columns: width } };
+		const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+		const ctx = {
+			mode: "tui",
+			ui: {
+				custom: (factory: (...args: unknown[]) => typeof component) =>
+					new Promise(() => {
+						component = factory(tui, theme, kb, () => {});
+					}),
+			},
+		} as unknown as ExtensionCommandContext;
+		void checkboxSelect(ctx, title, [{ id: "model", label: "model", checked: true }], { notes });
+		return component!.render(width);
+	}
+
+	function widest(lines: string[]): number {
+		return Math.max(...lines.map((line) => visibleWidth(line)));
+	}
+
+	it("wraps a long relay error instead of overflowing the terminal", () => {
+		const lines = renderHeader([relayError], 120);
+		assert.ok(widest(lines) <= 120, `widest line is ${widest(lines)} of 120`);
+		assert.ok(lines.length > 2, "the note should wrap onto its own lines");
+		// Nothing is dropped: the wrapped lines still carry the relay's message.
+		const text = lines.join("\n");
+		assert.ok(text.includes("INSUFFICIENT_BALANCE"), text);
+		assert.ok(text.includes("showing configured models only"), text);
+	});
+
+	it("keeps every line inside narrow terminals, long titles and unbreakable text", () => {
+		const cases: Array<{ notes: string[]; width: number; title?: string }> = [
+			{ notes: [relayError], width: 40 },
+			{ notes: ["x".repeat(300)], width: 30 },
+			{ notes: ["\tjson\t" + "a\u0007b".repeat(40)], width: 60 },
+			{ notes: [relayError], width: 50, title: `Models: ${"z".repeat(200)}` },
+		];
+		for (const { notes, width, title } of cases) {
+			const lines = renderHeader(notes, width, title);
+			assert.ok(widest(lines) <= width, `widest ${widest(lines)} > ${width} for ${JSON.stringify(notes).slice(0, 40)}`);
+		}
 	});
 });
 

@@ -10,6 +10,21 @@ import {
 } from "@earendil-works/pi-tui";
 import { spareRows, visibleRows } from "./fit.ts";
 
+/**
+ * Wrap one line of possibly arbitrary text (a relay's error body, a model id)
+ * to the render width.
+ *
+ * pi-tui throws when a rendered line is wider than the terminal, so a header
+ * built from raw strings crashes pi as soon as a note is long: a relay that
+ * answers the catalog request with `{"code":"INSUFFICIENT_BALANCE", …}` is
+ * enough. Tabs and control characters are flattened first because they would
+ * break the width math.
+ */
+function fitToWidth(text: string, width: number, style: (text: string) => string): string[] {
+	const safe = text.replace(/\t/g, "  ").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
+	return wrapTextWithAnsi(style(safe), Math.max(1, width)).map((line) => truncateToWidth(line, width));
+}
+
 export interface CheckboxItem {
 	/** Stable id / value returned when selected. */
 	id: string;
@@ -324,12 +339,12 @@ export async function checkboxSelect(
 
 		const details = new Map(items.flatMap((i) => (i.detail ? [[i.id, i.detail] as const] : [])));
 		const header = {
-			render(_width: number) {
+			render(width: number) {
 				const status = options.status?.(selected) ?? `${selected.size}/${items.length} selected`;
 				return [
-					theme.fg("accent", theme.bold(title)),
-					...(options.notes ?? []).map((note) => theme.fg("muted", ` ${note}`)),
-					theme.fg("dim", ` ${status}`),
+					...fitToWidth(title, width, (text) => theme.fg("accent", theme.bold(text))),
+					...(options.notes ?? []).flatMap((note) => fitToWidth(` ${note}`, width, (text) => theme.fg("muted", text))),
+					...fitToWidth(` ${status}`, width, (text) => theme.fg("dim", text)),
 					"",
 				];
 			},
