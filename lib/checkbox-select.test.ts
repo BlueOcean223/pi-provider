@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, type SettingItem, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
-import { checkboxSelect, MultiSelectList } from "./checkbox-select.ts";
+import { type CheckboxItem, checkboxSelect, MultiSelectList } from "./checkbox-select.ts";
 import { HOST_ROWS } from "./fit.ts";
 
 const kb = new KeybindingsManager(TUI_KEYBINDINGS);
@@ -169,25 +169,60 @@ describe("MultiSelectList rendering", () => {
 	});
 });
 
-describe("checkboxSelect palette", () => {
-	it("leaves unfocused labels in the terminal's default colour, like pi's settings list", () => {
-		let component: { render(width: number): string[] } | undefined;
-		const tui = { requestRender() {}, terminal: { rows: 40, columns: 100 } };
-		const theme = { fg: (color: string, text: string) => `<${color}>${text}`, bold: (text: string) => text };
-		const ctx = {
-			mode: "tui",
-			ui: {
-				custom: (factory: (...args: unknown[]) => typeof component) =>
-					new Promise(() => {
-						component = factory(tui, theme, kb, () => {});
-					}),
-			},
-		} as unknown as ExtensionCommandContext;
-		void checkboxSelect(ctx, "Models", [
+const passThroughTheme = {
+	fg: (_color: string, text: string) => text,
+	bold: (text: string) => text,
+};
+
+/** A theme that emits real escapes: wrapping has to carry them onto every line. */
+const ansiTheme = {
+	fg: (_color: string, text: string) => `\x1b[36m${text}\x1b[39m`,
+	bold: (text: string) => `\x1b[1m${text}\x1b[22m`,
+};
+
+type TestTheme = typeof passThroughTheme;
+
+/** Render the whole checkbox screen for a scripted `ui.custom`. */
+function renderPanel(options: {
+	width: number;
+	title?: string;
+	notes?: string[];
+	items?: CheckboxItem[];
+	theme?: TestTheme;
+}): string[] {
+	let component: { render(width: number): string[] } | undefined;
+	const tui = { requestRender() {}, terminal: { rows: 40, columns: options.width } };
+	const ctx = {
+		mode: "tui",
+		ui: {
+			custom: (factory: (...args: unknown[]) => typeof component) =>
+				new Promise(() => {
+					component = factory(tui, options.theme ?? passThroughTheme, kb, () => {});
+				}),
+		},
+	} as unknown as ExtensionCommandContext;
+	void checkboxSelect(
+		ctx,
+		options.title ?? "Models",
+		options.items ?? [
 			{ id: "alpha", label: "alpha", checked: true },
 			{ id: "beta", label: "beta" },
-		]);
-		const out = component!.render(100).join("\n");
+		],
+		{ notes: options.notes },
+	);
+	return component!.render(options.width);
+}
+
+function widest(lines: string[]): number {
+	return Math.max(...lines.map((line) => visibleWidth(line)));
+}
+
+describe("checkboxSelect palette", () => {
+	it("leaves unfocused labels in the terminal's default colour, like pi's settings list", () => {
+		const out = renderPanel({
+			width: 100,
+			theme: { fg: (color: string, text: string) => `<${color}>${text}`, bold: (text: string) => text },
+		}).join("\n");
 		assert.ok(out.includes("<accent>[x] <accent>alpha"), out);
 		assert.ok(out.includes("<dim>[ ] beta"), out);
 	});
@@ -195,43 +230,27 @@ describe("checkboxSelect palette", () => {
 
 describe("checkboxSelect header width", () => {
 	// pi-tui throws when a rendered line is wider than the terminal, and pi exits
-	// with it. The header is built from raw strings, so a relay that answers the
-	// catalog request with an error body used to put a 164-column line into a
-	// 120-column terminal ("Couldn't list relay models ({…})").
+	// with it: an over-wide note became an uncaught exception instead of a hint.
 	const relayError = `Couldn't list relay models (${JSON.stringify({
 		code: "INSUFFICIENT_BALANCE",
 		message: "Insufficient account balance / 账户余额不足，请充值后重试",
 	})}) — showing configured models only`;
 
-	function renderHeader(notes: string[], width: number, title = "Models: relay"): string[] {
-		let component: { render(width: number): string[] } | undefined;
-		const tui = { requestRender() {}, terminal: { rows: 40, columns: width } };
-		const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
-		const ctx = {
-			mode: "tui",
-			ui: {
-				custom: (factory: (...args: unknown[]) => typeof component) =>
-					new Promise(() => {
-						component = factory(tui, theme, kb, () => {});
-					}),
-			},
-		} as unknown as ExtensionCommandContext;
-		void checkboxSelect(ctx, title, [{ id: "model", label: "model", checked: true }], { notes });
-		return component!.render(width);
-	}
-
-	function widest(lines: string[]): number {
-		return Math.max(...lines.map((line) => visibleWidth(line)));
+	/** The note's own lines: everything between the title and the status line. */
+	function noteLines(lines: string[], title: string): string[] {
+		const start = lines.findIndex((line) => line.includes(title));
+		const end = lines.findIndex((line, index) => index > start && /\d+\/\d+ selected/.test(line));
+		return start < 0 || end < 0 ? [] : lines.slice(start + 1, end);
 	}
 
 	it("wraps a long relay error instead of overflowing the terminal", () => {
-		const lines = renderHeader([relayError], 120);
+		const title = "Models: relay";
+		const lines = renderPanel({ width: 120, title, notes: [relayError] });
 		assert.ok(widest(lines) <= 120, `widest line is ${widest(lines)} of 120`);
-		assert.ok(lines.length > 2, "the note should wrap onto its own lines");
-		// Nothing is dropped: the wrapped lines still carry the relay's message.
-		const text = lines.join("\n");
-		assert.ok(text.includes("INSUFFICIENT_BALANCE"), text);
-		assert.ok(text.includes("showing configured models only"), text);
+		assert.equal(noteLines(lines, title).length, 2, "the note should wrap onto two lines");
+		// Nothing is dropped: wrapping may split anywhere, so compare whitespace-free.
+		const flat = lines.join("").replace(/\s+/g, "");
+		assert.ok(flat.includes(relayError.replace(/\s+/g, "")), lines.join("\n"));
 	});
 
 	it("keeps every line inside narrow terminals, long titles and unbreakable text", () => {
@@ -242,8 +261,27 @@ describe("checkboxSelect header width", () => {
 			{ notes: [relayError], width: 50, title: `Models: ${"z".repeat(200)}` },
 		];
 		for (const { notes, width, title } of cases) {
-			const lines = renderHeader(notes, width, title);
+			const lines = renderPanel({ width, notes, title });
 			assert.ok(widest(lines) <= width, `widest ${widest(lines)} > ${width} for ${JSON.stringify(notes).slice(0, 40)}`);
+		}
+	});
+
+	it("caps a pathological note so the list and its keys keep their rows", () => {
+		const title = "Models: relay";
+		const notes = noteLines(renderPanel({ width: 30, title, notes: ["x".repeat(300)] }), title);
+		assert.ok(notes.length <= 3, `note used ${notes.length} lines`);
+		assert.ok(notes.at(-1)!.includes("…"), notes.join("\n"));
+	});
+
+	it("wraps styled text without losing the colour or the width bound", () => {
+		const title = "Models: relay";
+		const lines = renderPanel({ width: 120, title, notes: [relayError], theme: ansiTheme });
+		assert.ok(widest(lines) <= 120, `widest line is ${widest(lines)} of 120`);
+		const wrapped = noteLines(lines, title);
+		assert.ok(wrapped.length > 1, "the note should wrap");
+		// The indent is plain; the styled text starts right after it, on every line.
+		for (const line of wrapped) {
+			assert.ok(line.trimStart().startsWith("\x1b[36m"), `line starts without the colour: ${JSON.stringify(line)}`);
 		}
 	});
 });
