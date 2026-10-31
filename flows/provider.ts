@@ -4,7 +4,7 @@ import { readModelsFile, removeProvider, writeModelsFile } from "../lib/models-j
 import { type MenuEntry, type MenuNote, rowMenu } from "../lib/row-menu.ts";
 import { formatAge, forgetTest, lastTest } from "../lib/test-history.ts";
 import { API_LABELS, type ProviderConfig } from "../lib/types.ts";
-import { promptApiKey, promptBaseUrl, promptCompat, promptDisplayName, promptProtocol } from "./fields.ts";
+import { promptApiKey, promptBaseUrl, promptCompat, promptProtocol } from "./fields.ts";
 import { addModelIdsManually, manageModels, syncMetadata } from "./models.ts";
 import {
 	canAddModels,
@@ -78,7 +78,6 @@ function detailEntries(cfg: ProviderConfig): MenuEntry[] {
 		});
 	}
 	entries.push({ id: "key", label: "API key", value: describeKey(cfg.apiKey) });
-	if (!proxy) entries.push({ id: "name", label: "Display name", value: cfg.name ?? "(none — shows the id)" });
 	if (openaiStyle) entries.push({ id: "compat", label: "Compat", value: formatCompat(cfg.compat) ?? "none" });
 
 	if (!proxy) {
@@ -120,7 +119,7 @@ export async function providerScreen(env: Env, providerId: string, initial?: Not
 
 		const choice = await rowMenu(ctx, {
 			title: providerId,
-			subtitle: proxy ? "Built-in provider routed through a relay" : current.name,
+			subtitle: proxy ? "Built-in provider routed through a relay" : undefined,
 			notes: [...noticeNote(notice), ...(credential ? [credential] : []), ...(testNote ? [testNote] : []), ...jsoncNotes()],
 			entries: detailEntries(current),
 			keys: [{ key: "x", label: "remove key", applies: (row) => row.id === "key" && Boolean(current.apiKey) }],
@@ -176,19 +175,6 @@ export async function providerScreen(env: Env, providerId: string, initial?: Not
 							return key.value ? { ...rest, apiKey: key.value } : rest;
 						},
 						key.value ? "API key updated" : "API key removed",
-					);
-				}
-				break;
-			}
-			case "name": {
-				const name = await promptDisplayName(ctx, current.name, providerId);
-				if (name && name.value !== current.name) {
-					notice = await update(
-						(c) => {
-							const { name: _old, ...rest } = c;
-							return name.value ? { ...rest, name: name.value } : rest;
-						},
-						name.value ? "Display name updated" : "Display name removed",
 					);
 				}
 				break;

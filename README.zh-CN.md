@@ -51,7 +51,6 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
  → Base URL      https://api.relay-one.com/v1
    Protocol      OpenAI Chat Completions
    API key       stored in models.json · sk-…9c2e
-   Display name  (none — shows the id)
    Compat        none
 
    Models        3 configured
@@ -67,7 +66,7 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 
 ## 特性
 
-- **以供应商为主界面**：`/provider` 打开供应商列表，回车进入某个供应商的页面，每项设置都是一行、就地编辑（base URL、协议、API key、显示名、compat、模型）；在列表上按 `t` 直接测试
+- **以供应商为主界面**：`/provider` 打开供应商列表，回车进入某个供应商的页面，每项设置都是一行、就地编辑（base URL、协议、API key、compat、模型）；在列表上按 `t` 直接测试
 - **五步新增流程**：base URL → API key → 协议 → 模型 → 汇总页。按 Esc 回退时已填的值都保留；汇总页可以直接改任意字段，改个拼写错误不用从头走一遍
 - API 协议手动四选一，不做猜测：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses、Google Generative AI
 - API key 只有一个输入框：粘贴 key 即明文保存，输入 `$NAME` 引用环境变量，留空则之后用 `/login`。明文 key 不会再显示出来（显示为 `sk-…abcd`）
@@ -125,7 +124,7 @@ pi -e npm:@blueocean223/pi-provider
 
 供应商页面列出各项设置；在某行上回车即编辑，改动立即写入（编辑时按 Esc 不做任何修改）：
 
-- **Base URL**、**Protocol**、**Display name**
+- **Base URL**、**Protocol**
 - **API key**——回车替换（留空保留已存的 key）；`x` 删除 key（明文 key 会先确认）
 - **Compat**（OpenAI 系协议）——预设，或以 JSON 编辑
 - **Models**——合并后的模型清单（见下文）；**Add model ids manually** 手动添加；**Sync metadata from pi's catalog** 同步元数据

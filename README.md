@@ -51,7 +51,6 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
  → Base URL      https://api.relay-one.com/v1
    Protocol      OpenAI Chat Completions
    API key       stored in models.json · sk-…9c2e
-   Display name  (none — shows the id)
    Compat        none
 
    Models        3 configured
@@ -67,7 +66,7 @@ A [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) extension 
 
 ## Features
 
-- **Provider-first screens**: `/provider` opens your provider list. Enter opens a provider's page, where every setting is a row you edit in place (base URL, protocol, API key, display name, compat, models); `t` tests a provider straight from the list
+- **Provider-first screens**: `/provider` opens your provider list. Enter opens a provider's page, where every setting is a row you edit in place (base URL, protocol, API key, compat, models); `t` tests a provider straight from the list
 - **Five-screen add flow**: base URL → API key → protocol → models → review. Values survive stepping back with Esc, and the review page edits any field in place, so fixing a typo never means walking back through the wizard
 - API protocol is always picked manually, never guessed: OpenAI Chat Completions, Anthropic Messages, OpenAI Responses, Google Generative AI
 - API key in one field: paste a key to store it, type `$NAME` to reference an environment variable, or leave it empty and use `/login` later. Literal keys are never shown back (`sk-…abcd`)
@@ -125,7 +124,7 @@ The list shows one row per provider — `id  host · protocol · N models` plus 
 
 A provider's page lists its settings; Enter on a row edits it and writes the change immediately (Esc in the editor changes nothing):
 
-- **Base URL**, **Protocol**, **Display name**
+- **Base URL**, **Protocol**
 - **API key** — Enter replaces it (empty keeps the stored key); `x` removes it (asks first for a stored literal key)
 - **Compat** (OpenAI protocols) — presets, or edit the flags as JSON
 - **Models** — the combined model list (see below); **Add model ids manually**; **Sync metadata from pi's catalog**

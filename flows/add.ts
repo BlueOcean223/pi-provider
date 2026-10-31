@@ -5,7 +5,7 @@ import { listProviderIds, readModelsFile, sanitizeProviderId, upsertProvider, wr
 import { enrichModelEntry } from "../lib/official-catalog.ts";
 import { type MenuNote, rowMenu } from "../lib/row-menu.ts";
 import { API_LABELS, type ListedModel, type ProviderApi, type ProviderConfig } from "../lib/types.ts";
-import { promptApiKey, promptBaseUrl, promptDisplayName, promptProtocol, promptProviderId } from "./fields.ts";
+import { promptApiKey, promptBaseUrl, promptProtocol, promptProviderId } from "./fields.ts";
 import { parseModelIds } from "./models.ts";
 import {
 	builtinProviderIds,
@@ -102,7 +102,6 @@ interface Draft {
 	id: string;
 	/** Set once the user edits the id, so it stops following the base URL. */
 	idTouched: boolean;
-	name?: string;
 	baseUrl: string;
 	apiKey?: string;
 	api?: ProviderApi;
@@ -188,7 +187,6 @@ function buildConfig(env: Env, draft: Draft): { config: ProviderConfig; matched:
 	);
 	return {
 		config: {
-			...(draft.name ? { name: draft.name } : {}),
 			baseUrl: draft.baseUrl,
 			api: draft.api,
 			...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
@@ -243,7 +241,6 @@ async function reviewStep(env: Env, draft: Draft): Promise<StepOutcome> {
 			notes,
 			entries: [
 				{ id: "id", label: "Provider id", value: draft.id },
-				{ id: "name", label: "Display name", value: draft.name ?? "(none — shows the id)" },
 				{ id: "baseUrl", label: "Base URL", value: draft.baseUrl },
 				{ id: "api", label: "Protocol", value: draft.api ? API_LABELS[draft.api] : "(not set)" },
 				{ id: "key", label: "API key", value: describeKey(draft.apiKey) },
@@ -269,11 +266,6 @@ async function reviewStep(env: Env, draft: Draft): Promise<StepOutcome> {
 					draft.id = id;
 					draft.idTouched = true;
 				}
-				break;
-			}
-			case "name": {
-				const name = await promptDisplayName(ctx, draft.name, draft.id);
-				if (name) draft.name = name.value;
 				break;
 			}
 			case "baseUrl": {

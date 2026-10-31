@@ -94,21 +94,6 @@ export async function promptProtocol(ctx: Ctx, current: ProviderApi | undefined)
 	return API_OPTIONS[labels.indexOf(picked)];
 }
 
-export async function promptDisplayName(
-	ctx: Ctx,
-	current: string | undefined,
-	providerId: string,
-): Promise<{ value: string | undefined } | undefined> {
-	const raw = await loopInput(ctx, "Display name", {
-		initial: current,
-		placeholder: providerId,
-		hint: ["Shown in /model. Leave empty to show the provider id."],
-	});
-	if (raw === undefined) return undefined;
-	const trimmed = raw.trim();
-	return { value: trimmed && trimmed !== providerId ? trimmed : undefined };
-}
-
 export async function promptProviderId(ctx: Ctx, current: string): Promise<string | undefined> {
 	const raw = await loopInput(ctx, "Provider id", {
 		initial: current,
