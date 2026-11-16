@@ -1,6 +1,6 @@
 {
   "name": "@blueocean223/pi-provider",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "/provider command for pi: add, edit and test custom providers (relays, proxies, local servers) in models.json",
   "license": "MIT",
   "author": "BlueOcean223",
@@ -33,7 +33,8 @@
     "flows/*.ts",
     "lib/*.ts",
     "!lib/*.test.ts",
-    "README.zh-CN.md"
+    "README.zh-CN.md",
+    "CHANGELOG.md"
   ],
   "keywords": ["pi-package", "pi", "pi-coding-agent", "provider", "models.json", "relay"],
   "peerDependencies": {
