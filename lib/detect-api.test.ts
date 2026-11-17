@@ -58,7 +58,9 @@ describe("listOpenAIModels", () => {
 	// Entry shapes as the servers build them: vLLM's ModelCard
 	// (vllm/entrypoints/serve/engine/protocol.py; SGLang's is the same),
 	// llama.cpp's single-model and router lists (tools/server/server-context.cpp,
-	// server-models.cpp) and new-api's OpenAIModels (relaykit/dto/pricing.go).
+	// server-models.cpp), the Magpie gateway's (modelObject and toolsTold in
+	// internal/gateway/gateway.go), OpenRouter's, Groq's and new-api's
+	// OpenAIModels (relaykit/dto/pricing.go).
 	it("reads the context window and image input local servers report", async () => {
 		mockFetch(() => ({
 			status: 200,
@@ -82,6 +84,36 @@ describe("listOpenAIModels", () => {
 						source: "cache", can_remove: true, context_length: 40960,
 					},
 					{
+						id: "deepseek/deepseek-flash", object: "model", type: "model", created: 0,
+						created_at: "2025-01-01T00:00:00Z", owned_by: "deepseek", display_name: "DeepSeek Flash",
+						reasoning: true, supported_reasoning_levels: [{ effort: "none" }, { effort: "high" }, { effort: "max" }],
+						reasoning_levels: ["none", "high", "max"],
+						context_window: 1048576, context_length: 1048576, max_input_tokens: 1048576,
+						max_output_tokens: 393216,
+						modalities: { input: ["text", "image"], output: ["text"] },
+						tool_call: true, supported_parameters: ["tools", "tool_choice", "reasoning"],
+					},
+					{
+						id: "moonshot/kimi-k3", object: "model", type: "model", created: 0,
+						created_at: "2025-01-01T00:00:00Z", owned_by: "moonshot", display_name: "Kimi K3",
+						reasoning: false, supported_reasoning_levels: [], reasoning_levels: [],
+						context_window: 262144, context_length: 262144, max_input_tokens: 262144,
+						modalities: { input: ["text"], output: ["text"] },
+						tool_call: true, supported_parameters: ["tools", "tool_choice"],
+					},
+					{
+						id: "tencent/hy4-flash", canonical_slug: "tencent/hy4-flash-20261116", name: "Tencent: Hy4 flash",
+						created: 1, context_length: 1048576,
+						architecture: { modality: "text+image->text", input_modalities: ["text", "image"], output_modalities: ["text"] },
+						top_provider: { context_length: 1048576, max_completion_tokens: 65536, is_moderated: false },
+						supported_parameters: ["include_reasoning", "max_tokens", "reasoning", "tools"],
+						reasoning: { mandatory: false, default_enabled: true },
+					},
+					{
+						id: "llama-3.3-70b-versatile", object: "model", created: 1, owned_by: "Meta", active: true,
+						context_window: 131072, max_completion_tokens: 32768,
+					},
+					{
 						id: "gpt-6-sol", object: "model", created: 1626777600, owned_by: "openai",
 						supported_endpoint_types: ["openai"],
 					},
@@ -96,6 +128,19 @@ describe("listOpenAIModels", () => {
 			// The per-slot runtime context, not the training context.
 			{ id: "gemma-3-12b-it", name: undefined, contextWindow: 16384, input: ["text", "image"] },
 			{ id: "qwen3-8b", name: undefined, contextWindow: 40960 },
+			{
+				id: "deepseek/deepseek-flash",
+				name: "DeepSeek Flash",
+				contextWindow: 1048576,
+				input: ["text", "image"],
+				maxTokens: 393216,
+				reasoning: true,
+				thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
+			},
+			{ id: "moonshot/kimi-k3", name: "Kimi K3", contextWindow: 262144 },
+			// OpenRouter's reasoning is an object and its reply limit sits under top_provider: neither is read.
+			{ id: "tencent/hy4-flash", name: "Tencent: Hy4 flash", contextWindow: 1048576, input: ["text", "image"] },
+			{ id: "llama-3.3-70b-versatile", name: undefined, contextWindow: 131072 },
 			{ id: "gpt-6-sol", name: undefined },
 		]);
 	});
@@ -111,6 +156,7 @@ describe("listOpenAIModels", () => {
 					{ id: "fraction", context_length: 1.5 },
 					{ id: "falls-through", max_model_len: null, meta: null, context_length: 8192 },
 					{ id: "odd-shapes", meta: "n_ctx", architecture: { input_modalities: "image" } },
+					{ id: "odd-magpie", context_window: "262144", modalities: ["text", "image"] },
 				],
 			},
 		}));
@@ -124,6 +170,56 @@ describe("listOpenAIModels", () => {
 			{ id: "fraction", name: undefined },
 			{ id: "falls-through", name: undefined, contextWindow: 8192 },
 			{ id: "odd-shapes", name: undefined },
+			{ id: "odd-magpie", name: undefined },
+		]);
+	});
+
+	it("maps the reasoning levels a server lists onto pi's thinking levels", async () => {
+		mockFetch(() => ({
+			status: 200,
+			body: {
+				data: [
+					// Magpie lists a vendor's own words (its catalog's EffortAliases) as they are
+					{ id: "aliases", reasoning: true, reasoning_levels: ["light", "medium", "high", "extra_high"] },
+					{ id: "all", reasoning: true, reasoning_levels: ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"] },
+					// thinks, but no level of pi's to pick
+					{ id: "no-levels", reasoning: true, reasoning_levels: [] },
+					{ id: "none-and-ultra", reasoning: true, reasoning_levels: ["none", "ultra"] },
+					// levels without reasoning: true don't count
+					{ id: "not-thinking", reasoning: false, reasoning_levels: ["high"] },
+					{ id: "string-flag", reasoning: "true", reasoning_levels: ["high"] },
+					{ id: "odd-levels", reasoning: true, reasoning_levels: "high", max_output_tokens: "8192", display_name: "" },
+					{ id: "mixed", reasoning: true, reasoning_levels: [null, 3, "", "HIGH"], max_output_tokens: 0 },
+				],
+			},
+		}));
+
+		const result = await listOpenAIModels({ baseUrl: "http://localhost:3425/v1" });
+
+		assert.deepEqual(result.models, [
+			{
+				id: "aliases",
+				name: undefined,
+				reasoning: true,
+				thinkingLevelMap: { minimal: null, low: "light", medium: "medium", high: "high", xhigh: "extra_high" },
+			},
+			{
+				id: "all",
+				name: undefined,
+				reasoning: true,
+				thinkingLevelMap: { minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
+			},
+			{ id: "no-levels", name: undefined, reasoning: true },
+			{ id: "none-and-ultra", name: undefined, reasoning: true },
+			{ id: "not-thinking", name: undefined },
+			{ id: "string-flag", name: undefined },
+			{ id: "odd-levels", name: undefined, reasoning: true },
+			{
+				id: "mixed",
+				name: undefined,
+				reasoning: true,
+				thinkingLevelMap: { minimal: null, low: null, medium: null, high: "HIGH" },
+			},
 		]);
 	});
 });

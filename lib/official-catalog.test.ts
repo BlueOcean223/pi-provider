@@ -117,16 +117,38 @@ describe("enrichModelEntry server-reported metadata", () => {
 		assert.equal(r.entry.contextWindow, 128_000);
 		assert.deepEqual(r.entry.input, ["text"]);
 		assert.equal(r.detail, "no official match · defaults 128k");
+		assert.equal(r.entry.maxTokens, 16_384);
+		assert.equal(r.entry.reasoning, false);
+		assert.equal(r.entry.thinkingLevelMap, undefined);
+	});
+
+	it("takes the reply limit and thinking levels the server reports", () => {
+		const r = enrichModelEntry([opus46], "deepseek/deepseek-flash", "openai-completions", "DeepSeek Flash", {
+			contextWindow: 1_048_576,
+			maxTokens: 393_216,
+			reasoning: true,
+			thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
+		});
+		assert.equal(r.status, "default");
+		assert.equal(r.entry.name, "DeepSeek Flash");
+		assert.equal(r.entry.maxTokens, 393_216);
+		assert.equal(r.entry.reasoning, true);
+		assert.deepEqual(r.entry.thinkingLevelMap, { minimal: null, low: null, medium: null, high: "high", max: "max" });
 	});
 
 	it("leaves a catalog match to the catalog", () => {
 		const r = enrichModelEntry([opus46], "claude-opus-4-6", "anthropic-messages", undefined, {
 			contextWindow: 200_000,
 			input: ["text"],
+			maxTokens: 32_000,
+			reasoning: true,
+			thinkingLevelMap: { high: "high" },
 		});
 		assert.equal(r.status, "matched");
 		assert.equal(r.entry.contextWindow, 1_000_000);
 		assert.deepEqual(r.entry.input, ["text", "image"]);
+		assert.equal(r.entry.maxTokens, 128_000);
+		assert.deepEqual(r.entry.thinkingLevelMap, { max: "max" });
 	});
 });
 

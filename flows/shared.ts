@@ -12,6 +12,7 @@ import {
 	enrichModelEntry,
 	formatCtx,
 	type OfficialModelMeta,
+	type ReportedMeta,
 } from "../lib/official-catalog.ts";
 import type { MenuNote, Tone } from "../lib/row-menu.ts";
 import {
@@ -365,11 +366,16 @@ export function enrichModels(
 }
 
 /** Where a new model's metadata comes from, for its checklist row. */
-export function metadataSource(result: EnrichResult, reported: Pick<ListedModel, "contextWindow" | "input">): string {
+export function metadataSource(result: EnrichResult, reported: ReportedMeta): string {
 	if (result.matched) return `metadata from ${result.matched}`;
+	const levels = Object.entries(reported.thinkingLevelMap ?? {})
+		.filter(([, v]) => v !== null)
+		.map(([k]) => k);
 	const parts = [
 		reported.contextWindow ? `${formatCtx(reported.contextWindow)} context` : undefined,
+		reported.maxTokens ? `${formatCtx(reported.maxTokens)} output` : undefined,
 		reported.input ? "image input" : undefined,
+		reported.reasoning ? (levels.length ? `thinking ${levels.join("/")}` : "reasoning") : undefined,
 	].filter(Boolean);
 	if (parts.length === 0) return "metadata: defaults (128k context)";
 	return `metadata: ${parts.join(", ")} reported by the server${reported.contextWindow ? "" : " · defaults (128k context)"}`;

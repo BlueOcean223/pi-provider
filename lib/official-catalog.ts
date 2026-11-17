@@ -312,6 +312,9 @@ export function matchOfficialModel(
 	return best;
 }
 
+/** What a server's model list may report about a model (see parseOpenAIModels). */
+export type ReportedMeta = Pick<ListedModel, "contextWindow" | "input" | "maxTokens" | "reasoning" | "thinkingLevelMap">;
+
 const DEFAULT_META = {
 	reasoning: false as const,
 	input: ["text"] as Array<"text" | "image">,
@@ -332,7 +335,7 @@ export function enrichModelEntry(
 	relayId: string,
 	preferredApi?: ProviderApi,
 	relayName?: string,
-	reported?: Pick<ListedModel, "contextWindow" | "input">,
+	reported?: ReportedMeta,
 ): EnrichResult {
 	const official = matchOfficialModel(catalog, relayId, preferredApi);
 
@@ -344,6 +347,9 @@ export function enrichModelEntry(
 				...(relayName && relayName !== relayId ? { name: relayName } : {}),
 				...DEFAULT_META,
 				...(contextWindow ? { contextWindow } : {}),
+				...(reported?.maxTokens ? { maxTokens: reported.maxTokens } : {}),
+				...(reported?.reasoning ? { reasoning: true } : {}),
+				...(reported?.thinkingLevelMap ? { thinkingLevelMap: reported.thinkingLevelMap } : {}),
 				...(reported?.input ? { input: reported.input } : {}),
 			},
 			status: "default",

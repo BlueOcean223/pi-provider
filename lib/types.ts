@@ -35,6 +35,12 @@ export interface ListedModel {
 	contextWindow?: number;
 	/** Set only when the server advertises image input. */
 	input?: Array<"text" | "image">;
+	/** Reply limit the server reports for this model, if it reports one. */
+	maxTokens?: number;
+	/** Set only when the server says the model thinks. */
+	reasoning?: true;
+	/** Thinking levels the server lists, mapped onto pi's (see thinkingLevelMapOf). */
+	thinkingLevelMap?: ModelEntry["thinkingLevelMap"];
 }
 
 export interface ProviderConfig {

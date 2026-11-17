@@ -272,6 +272,65 @@ describe("/provider add (TUI)", () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		}]);
 	});
+
+	it("saves the name, limits, image input and thinking levels the Magpie gateway reports", async () => {
+		globalThis.fetch = (async (input: string | URL | Request) => {
+			if (!String(input).endsWith("/models")) return new Response("not found", { status: 404 });
+			return Response.json({
+				object: "list",
+				data: [{
+					id: "deepseek/deepseek-flash", object: "model", type: "model", created: 0, owned_by: "deepseek",
+					display_name: "DeepSeek Flash", reasoning: true,
+					supported_reasoning_levels: [{ effort: "none" }, { effort: "high" }, { effort: "max" }],
+					reasoning_levels: ["none", "high", "max"],
+					context_window: 262144, context_length: 262144, max_input_tokens: 262144, max_output_tokens: 65536,
+					modalities: { input: ["text", "image"], output: ["text"] },
+				}],
+			});
+		}) as typeof fetch;
+		const { registry } = fakeRegistry(() => ({}));
+
+		await runCommand(
+			"add",
+			[
+				(s) => {
+					s.type("http://localhost:3425/v1");
+					s.press(KEY.enter);
+				},
+				(s) => {
+					s.type("magpie-pi");
+					s.press(KEY.enter);
+				},
+				(s) => s.press(KEY.enter),
+				(s) => {
+					const text = flat(s.text());
+					assert.ok(
+						text.includes("metadata: 262k context, 66k output, image input, thinking high/max reported by the server"),
+						text,
+					);
+					s.press(KEY.space, KEY.enter);
+				},
+				(s) => s.press(KEY.enter),
+				async (s) => {
+					await s.waitFor("run again");
+					s.press(KEY.esc);
+				},
+			],
+			registry,
+		);
+
+		const [saved] = Object.values(savedProviders());
+		assert.deepEqual(saved!.models, [{
+			id: "deepseek/deepseek-flash",
+			name: "DeepSeek Flash",
+			reasoning: true,
+			input: ["text", "image"],
+			contextWindow: 262144,
+			maxTokens: 65536,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
+		}]);
+	});
 });
 
 describe("provider ids pi already has (TUI)", () => {
