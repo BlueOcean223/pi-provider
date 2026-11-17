@@ -39,8 +39,8 @@ export interface ListedModel {
 	maxTokens?: number;
 	/** Set only when the server says the model thinks. */
 	reasoning?: true;
-	/** Thinking levels the server lists, mapped onto pi's (see thinkingLevelMapOf). */
-	thinkingLevelMap?: ModelEntry["thinkingLevelMap"];
+	/** Reasoning levels the server lists, as it spells them (mapped per API by reportedThinking). */
+	reasoningLevels?: string[];
 }
 
 export interface ProviderConfig {

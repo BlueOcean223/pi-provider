@@ -135,7 +135,7 @@ describe("listOpenAIModels", () => {
 				input: ["text", "image"],
 				maxTokens: 393216,
 				reasoning: true,
-				thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
+				reasoningLevels: ["none", "high", "max"],
 			},
 			{ id: "moonshot/kimi-k3", name: "Kimi K3", contextWindow: 262144 },
 			// OpenRouter's reasoning is an object and its reply limit sits under top_provider: neither is read.
@@ -174,7 +174,7 @@ describe("listOpenAIModels", () => {
 		]);
 	});
 
-	it("maps the reasoning levels a server lists onto pi's thinking levels", async () => {
+	it("keeps the reasoning levels a server lists as it spells them", async () => {
 		mockFetch(() => ({
 			status: 200,
 			body: {
@@ -197,29 +197,19 @@ describe("listOpenAIModels", () => {
 		const result = await listOpenAIModels({ baseUrl: "http://localhost:3425/v1" });
 
 		assert.deepEqual(result.models, [
-			{
-				id: "aliases",
-				name: undefined,
-				reasoning: true,
-				thinkingLevelMap: { minimal: null, low: "light", medium: "medium", high: "high", xhigh: "extra_high" },
-			},
+			{ id: "aliases", name: undefined, reasoning: true, reasoningLevels: ["light", "medium", "high", "extra_high"] },
 			{
 				id: "all",
 				name: undefined,
 				reasoning: true,
-				thinkingLevelMap: { minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
+				reasoningLevels: ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
 			},
 			{ id: "no-levels", name: undefined, reasoning: true },
-			{ id: "none-and-ultra", name: undefined, reasoning: true },
+			{ id: "none-and-ultra", name: undefined, reasoning: true, reasoningLevels: ["none", "ultra"] },
 			{ id: "not-thinking", name: undefined },
 			{ id: "string-flag", name: undefined },
 			{ id: "odd-levels", name: undefined, reasoning: true },
-			{
-				id: "mixed",
-				name: undefined,
-				reasoning: true,
-				thinkingLevelMap: { minimal: null, low: null, medium: null, high: "HIGH" },
-			},
+			{ id: "mixed", name: undefined, reasoning: true, reasoningLevels: ["HIGH"] },
 		]);
 	});
 });

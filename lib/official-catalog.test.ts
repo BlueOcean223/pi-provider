@@ -127,13 +127,28 @@ describe("enrichModelEntry server-reported metadata", () => {
 			contextWindow: 1_048_576,
 			maxTokens: 393_216,
 			reasoning: true,
-			thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
+			reasoningLevels: ["none", "high", "max"],
 		});
 		assert.equal(r.status, "default");
 		assert.equal(r.entry.name, "DeepSeek Flash");
 		assert.equal(r.entry.maxTokens, 393_216);
 		assert.equal(r.entry.reasoning, true);
-		assert.deepEqual(r.entry.thinkingLevelMap, { minimal: null, low: null, medium: null, high: "high", max: "max" });
+		assert.deepEqual(r.entry.thinkingLevelMap, { off: "none", minimal: null, low: null, medium: null, high: "high", max: "max" });
+		assert.equal(r.entry.compat, undefined);
+	});
+
+	it("maps the reported levels for the API the provider uses", () => {
+		const reported = { reasoning: true as const, reasoningLevels: ["none", "high", "max"] };
+		const anthropic = enrichModelEntry([opus46], "deepseek/deepseek-flash", "anthropic-messages", undefined, reported);
+		assert.deepEqual(anthropic.entry.compat, { forceAdaptiveThinking: true });
+		const google = enrichModelEntry([opus46], "deepseek/deepseek-flash", "google-generative-ai", undefined, reported);
+		assert.deepEqual(google.entry.thinkingLevelMap, { minimal: null, low: null, medium: null, high: "high" });
+	});
+
+	it("ignores reported levels without reported reasoning", () => {
+		const r = enrichModelEntry([opus46], "qwen3-8b", "openai-completions", undefined, { reasoningLevels: ["high"] });
+		assert.equal(r.entry.reasoning, false);
+		assert.equal(r.entry.thinkingLevelMap, undefined);
 	});
 
 	it("leaves a catalog match to the catalog", () => {
@@ -142,7 +157,7 @@ describe("enrichModelEntry server-reported metadata", () => {
 			input: ["text"],
 			maxTokens: 32_000,
 			reasoning: true,
-			thinkingLevelMap: { high: "high" },
+			reasoningLevels: ["high"],
 		});
 		assert.equal(r.status, "matched");
 		assert.equal(r.entry.contextWindow, 1_000_000);

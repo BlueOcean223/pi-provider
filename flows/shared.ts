@@ -14,6 +14,7 @@ import {
 	type OfficialModelMeta,
 	type ReportedMeta,
 } from "../lib/official-catalog.ts";
+import { offeredLevels } from "../lib/reported-thinking.ts";
 import type { MenuNote, Tone } from "../lib/row-menu.ts";
 import {
 	API_OPTIONS,
@@ -368,9 +369,7 @@ export function enrichModels(
 /** Where a new model's metadata comes from, for its checklist row. */
 export function metadataSource(result: EnrichResult, reported: ReportedMeta): string {
 	if (result.matched) return `metadata from ${result.matched}`;
-	const levels = Object.entries(reported.thinkingLevelMap ?? {})
-		.filter(([, v]) => v !== null)
-		.map(([k]) => k);
+	const levels = offeredLevels(result.entry.thinkingLevelMap);
 	const parts = [
 		reported.contextWindow ? `${formatCtx(reported.contextWindow)} context` : undefined,
 		reported.maxTokens ? `${formatCtx(reported.maxTokens)} output` : undefined,

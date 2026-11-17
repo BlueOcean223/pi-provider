@@ -71,40 +71,11 @@ function tokenCount(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
-type ThinkingLevelMap = NonNullable<ModelEntry["thinkingLevelMap"]>;
-
-/** pi's thinking levels above off, weakest first. */
-const PI_THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
-
-/** Vendor words Magpie lists as they are, each with the level it is (its catalog's EffortAliases). */
-const EFFORT_ALIASES: Record<string, string> = { light: "low", extra_high: "xhigh" };
-
-/**
- * Map the reasoning levels a server lists (Magpie's `reasoning_levels`) onto
- * pi's thinking levels. A listed level is sent as the server spells it; a
- * standard level it doesn't list is marked unsupported, so pi offers only
- * the ones the model takes. `off` stays unmapped: pi then sends no effort
- * when thinking is off, as for any model without a map. Undefined when no
- * listed level is one of pi's (none, or only `none` / `ultra`).
- */
-function thinkingLevelMapOf(levels: unknown): ThinkingLevelMap | undefined {
-	if (!Array.isArray(levels)) return undefined;
-	const spelled = new Map<string, string>();
-	for (const level of levels) {
-		if (typeof level !== "string" || !level) continue;
-		const lower = level.toLowerCase();
-		const canonical = EFFORT_ALIASES[lower] ?? lower;
-		if (!spelled.has(canonical)) spelled.set(canonical, level);
-	}
-	if (!PI_THINKING_LEVELS.some((l) => spelled.has(l))) return undefined;
-	const map: ThinkingLevelMap = {};
-	for (const level of PI_THINKING_LEVELS) {
-		const value = spelled.get(level);
-		// xhigh and max are off unless mapped, so only the standard ones need a null
-		if (value) map[level] = value;
-		else if (level !== "xhigh" && level !== "max") map[level] = null;
-	}
-	return map;
+/** The non-empty strings of a list; undefined when it isn't one or has none. */
+function stringList(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const out = value.filter((v): v is string => typeof v === "string" && v.length > 0);
+	return out.length ? out : undefined;
 }
 
 /**
@@ -154,7 +125,7 @@ function parseOpenAIModels(json: unknown): ListedModel[] {
 		const image = Array.isArray(inputs) && inputs.includes("image");
 		const maxTokens = tokenCount(max_output_tokens);
 		const thinks = reasoning === true;
-		const thinkingLevelMap = thinks ? thinkingLevelMapOf(reasoning_levels) : undefined;
+		const reasoningLevels = thinks ? stringList(reasoning_levels) : undefined;
 		out.push({
 			id,
 			name: typeof name === "string" ? name : typeof display_name === "string" && display_name ? display_name : undefined,
@@ -162,7 +133,7 @@ function parseOpenAIModels(json: unknown): ListedModel[] {
 			...(image ? { input: ["text", "image"] } : {}),
 			...(maxTokens ? { maxTokens } : {}),
 			...(thinks ? { reasoning: true as const } : {}),
-			...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+			...(reasoningLevels ? { reasoningLevels } : {}),
 		});
 	}
 	return out;

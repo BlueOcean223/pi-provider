@@ -328,7 +328,7 @@ describe("/provider add (TUI)", () => {
 			contextWindow: 262144,
 			maxTokens: 65536,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
+			thinkingLevelMap: { off: "none", minimal: null, low: null, medium: null, high: "high", max: "max" },
 		}]);
 	});
 });
