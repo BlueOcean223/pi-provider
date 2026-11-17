@@ -71,7 +71,7 @@ Pi（[`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil
 - API 协议手动四选一，不做猜测：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses、Google Generative AI
 - API key 只有一个输入框：粘贴 key 即明文保存，输入 `$NAME` 引用环境变量，留空则之后用 `/login`。明文 key 不会再显示出来（显示为 `sk-…abcd`）
 - 自动请求中转站 `GET /v1/models`，打开模型清单，每行带上下文长度 / 是否 thinking（输入即搜索，Space 切换，Ctrl+A 切换当前可见的全部行）
-- 自动对齐 **pi 官方模型目录**，为选中模型补全 `contextWindow`、`maxTokens`、`reasoning`、`thinkingLevelMap`、`cost` 等元数据；匹配不到则用服务端模型列表报告的上下文和图片输入（vLLM、SGLang、llama.cpp），再回退默认值（128k 上下文）
+- 自动对齐 **pi 官方模型目录**，为选中模型补全 `contextWindow`、`maxTokens`、`reasoning`、`thinkingLevelMap`、`cost` 等元数据；匹配不到则用服务端模型列表报告的元数据（vLLM、SGLang、llama.cpp、OpenRouter 的上下文和图片输入；Magpie 还有名称、输出上限和思考档位），再回退默认值（128k 上下文）
 - 转发 Anthropic 模型级 `compat` 标记（如 Claude Opus/Sonnet 4.6 的 `forceAdaptiveThinking`），让中转副本与官方端点以相同方式协商 thinking
 - **保存即测试**：保存后直接打开测试面板；在通过的模型上按回车即把当前会话切到该模型
 - **测试走 pi 自己的请求路径**（`modelRegistry.streamSimple`）：凭据（含 `/login` 与供应商 `headers`）、URL 拼接、compat 标记、请求结构都与真实会话一致——reasoning 模型的系统提示以 `developer` role 发送，并带 `reasoning_effort`
@@ -138,7 +138,7 @@ pi -e npm:@blueocean223/pi-provider
 4. **Models**——自动拉取模型目录（OpenAI 风格 `{ data: [{ id }] }`，与聊天协议无关；按 `baseUrl` 是否已含 `/v1` 决定 `{baseUrl}/v1/models`、`{baseUrl}/models`、`{baseUrl}/api/v1/models` 的尝试顺序），至少选一个。中转站列不出模型时，会打开编辑器并写明原因，可以手动输入 model id
 5. **汇总页**——所有字段在一页上，provider id 按域名自动建议（`api.relay-one.com` → `relay-one`）。建议的 id 不会与 `models.json` 里已有的 id、pi 已有的供应商（`deepseek`、`openai` 等）或子命令名重复，重复时依次加 `-2`、`-3`。手动填了内置供应商的 id 会显示警告：pi 会把这条配置并入它自己的供应商，该供应商的内置模型也会改发到这个 base URL。在某行上回车即编辑，**Models** 回到模型清单。**Save and test** 写入并打开测试面板
 
-每个选中的 model id 都会匹配 **pi 官方模型目录**（直接取自 pi 运行中的模型注册表，因此各种安装方式都能用，且包含 pi 的远程目录刷新结果）：匹配到则复制官方的 `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` 等字段（`id` 仍然用中转站自己的），匹配不到则用默认值（128k 上下文、非 reasoning、零成本），但服务端模型列表报告的值优先：上下文取 vLLM/SGLang 的 `max_model_len` 或 llama.cpp 的 `meta.n_ctx`（router 模式下是 `context_length`，即训练上下文，只是上限），图片输入取 `architecture.input_modalities`。对于 Anthropic 协议的模型，描述模型自身请求特性的 `compat` 标记（如 `forceAdaptiveThinking`、`supportsStrictTools`）也会一并复制；网关/会话路由类标记则有意不复制。
+每个选中的 model id 都会匹配 **pi 官方模型目录**（直接取自 pi 运行中的模型注册表，因此各种安装方式都能用，且包含 pi 的远程目录刷新结果）：匹配到则复制官方的 `contextWindow` / `maxTokens` / `reasoning` / `thinkingLevelMap` / `cost` 等字段（`id` 仍然用中转站自己的），匹配不到则用默认值（128k 上下文、非 reasoning、零成本），但服务端模型列表报告的值优先：上下文取 vLLM/SGLang 的 `max_model_len` 或 llama.cpp 的 `meta.n_ctx`（router 模式下是 `context_length`，即训练上下文，只是上限）、`context_length`（OpenRouter、Magpie）或 `context_window`（Groq），图片输入取 `architecture.input_modalities`（llama.cpp、OpenRouter）或 `modalities.input`（Magpie）。Magpie 的 `display_name` 用作名称，`max_output_tokens` 写入 `maxTokens`，`reasoning: true` 和 `reasoning_levels` 写入 `reasoning` 和 `thinkingLevelMap`，pi 只提供模型列出的思考档位。映射按供应商的协议生成：列出 `none` 时，关闭思考会发送 `none`；Anthropic Messages 协议还会设置 `compat.forceAdaptiveThinking`，让档位以 `output_config.effort` 发送（思考预算区分不了 high 和 max）；Google 协议只映射 minimal 到 high，这是它的 API 支持的全部档位。对于 Anthropic 协议的模型，描述模型自身请求特性的 `compat` 标记（如 `forceAdaptiveThinking`、`supportsStrictTools`）也会一并复制；网关/会话路由类标记则有意不复制。
 
 新增流程不再预先询问 compat：pi 文档要求 compat 标记描述已验证的差异，所以改为在中转站确实拒绝某个字段时，由测试面板给出对应的标记。
 
@@ -249,6 +249,7 @@ pi-provider/
     ├── models-json.ts         # 读写 models.json（兼容 JSONC、原子写入、0600 权限收紧）
     ├── detect-api.ts          # GET /v1/models 探测、连通性测试、备用 chat ping
     ├── official-catalog.ts    # 从 pi 运行中的模型注册表取官方目录，做 id 匹配与元数据补全
+    ├── reported-thinking.ts   # 把服务端列出的思考档位按协议转成 thinking 配置
     ├── model-management.ts    # 模型 diff/merge/refresh 不变量
     ├── compat-hints.ts        # 把中转站报错映射到能修复它的 compat 标记
     ├── test-history.ts        # 每个供应商最近一次测试结果（仅本次会话）

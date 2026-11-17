@@ -71,6 +71,13 @@ function tokenCount(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
+/** The non-empty strings of a list; undefined when it isn't one or has none. */
+function stringList(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const out = value.filter((v): v is string => typeof v === "string" && v.length > 0);
+	return out.length ? out : undefined;
+}
+
 /**
  * Parse an OpenAI-style `{ data: [{ id }] }` model list.
  *
@@ -79,7 +86,11 @@ function tokenCount(value: unknown): number | undefined {
  * llama.cpp sends the per-slot `meta.n_ctx` and, in router mode,
  * `context_length` (the training context, so only an upper bound). Runtime
  * values come first. llama.cpp and OpenRouter also list
- * `architecture.input_modalities`. new-api/one-api relays send none of these.
+ * `architecture.input_modalities`. The Magpie gateway sends `context_length`
+ * (and `context_window`, which Groq sends alone), a top-level
+ * `modalities.input`, `display_name`, `max_output_tokens`, a boolean
+ * `reasoning` and the levels in `reasoning_levels`. OpenRouter's `reasoning`
+ * is an object and isn't read. new-api/one-api relays send none of these.
  */
 function parseOpenAIModels(json: unknown): ListedModel[] {
 	if (!json || typeof json !== "object") return [];
@@ -88,17 +99,41 @@ function parseOpenAIModels(json: unknown): ListedModel[] {
 	const out: ListedModel[] = [];
 	for (const item of data) {
 		if (!item || typeof item !== "object") continue;
-		const { id, name, max_model_len, meta, context_length, architecture } = item as Record<string, unknown>;
+		const {
+			id,
+			name,
+			display_name,
+			max_model_len,
+			meta,
+			context_length,
+			context_window,
+			architecture,
+			modalities,
+			max_output_tokens,
+			reasoning,
+			reasoning_levels,
+		} = item as Record<string, unknown>;
 		if (typeof id !== "string" || !id) continue;
 		const contextWindow =
-			tokenCount(max_model_len) ?? tokenCount((meta as { n_ctx?: unknown } | null)?.n_ctx) ?? tokenCount(context_length);
-		const modalities = (architecture as { input_modalities?: unknown } | null)?.input_modalities;
-		const image = Array.isArray(modalities) && modalities.includes("image");
+			tokenCount(max_model_len) ??
+			tokenCount((meta as { n_ctx?: unknown } | null)?.n_ctx) ??
+			tokenCount(context_length) ??
+			tokenCount(context_window);
+		const inputs =
+			(architecture as { input_modalities?: unknown } | null)?.input_modalities ??
+			(modalities as { input?: unknown } | null)?.input;
+		const image = Array.isArray(inputs) && inputs.includes("image");
+		const maxTokens = tokenCount(max_output_tokens);
+		const thinks = reasoning === true;
+		const reasoningLevels = thinks ? stringList(reasoning_levels) : undefined;
 		out.push({
 			id,
-			name: typeof name === "string" ? name : undefined,
+			name: typeof name === "string" ? name : typeof display_name === "string" && display_name ? display_name : undefined,
 			...(contextWindow ? { contextWindow } : {}),
 			...(image ? { input: ["text", "image"] } : {}),
+			...(maxTokens ? { maxTokens } : {}),
+			...(thinks ? { reasoning: true as const } : {}),
+			...(reasoningLevels ? { reasoningLevels } : {}),
 		});
 	}
 	return out;

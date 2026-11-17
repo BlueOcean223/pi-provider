@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Models from the Magpie gateway that the official catalog does not know now take the image input (`modalities.input`), name (`display_name`), reply limit (`max_output_tokens`) and thinking levels (`reasoning`, `reasoning_levels`) its `/v1/models` reports, instead of text-only, a 16k reply limit and no thinking. pi offers only the thinking levels the model lists; turning thinking off sends `none` when the model lists it, and on Anthropic Messages the level is sent as an effort, so max is no longer asked as high ([#3](https://github.com/BlueOcean223/pi-provider/issues/3))
+- Groq's `context_window` is read as the context window
+
 ## [0.3.0] - 2026-11-16
 
 ### Added

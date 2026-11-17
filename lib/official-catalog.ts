@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { reportedThinking } from "./reported-thinking.ts";
 import type { ListedModel, ModelEntry, ProviderApi } from "./types.ts";
 
 /** Subset of pi official model fields we copy onto relay models. */
@@ -312,6 +313,9 @@ export function matchOfficialModel(
 	return best;
 }
 
+/** What a server's model list may report about a model (see parseOpenAIModels). */
+export type ReportedMeta = Pick<ListedModel, "contextWindow" | "input" | "maxTokens" | "reasoning" | "reasoningLevels">;
+
 const DEFAULT_META = {
 	reasoning: false as const,
 	input: ["text"] as Array<"text" | "image">,
@@ -332,18 +336,23 @@ export function enrichModelEntry(
 	relayId: string,
 	preferredApi?: ProviderApi,
 	relayName?: string,
-	reported?: Pick<ListedModel, "contextWindow" | "input">,
+	reported?: ReportedMeta,
 ): EnrichResult {
 	const official = matchOfficialModel(catalog, relayId, preferredApi);
 
 	if (!official) {
 		const contextWindow = reported?.contextWindow;
+		const thinking = reported?.reasoning ? reportedThinking(reported.reasoningLevels, preferredApi) : {};
 		return {
 			entry: {
 				id: relayId,
 				...(relayName && relayName !== relayId ? { name: relayName } : {}),
 				...DEFAULT_META,
 				...(contextWindow ? { contextWindow } : {}),
+				...(reported?.maxTokens ? { maxTokens: reported.maxTokens } : {}),
+				...(reported?.reasoning ? { reasoning: true } : {}),
+				...(thinking.thinkingLevelMap ? { thinkingLevelMap: thinking.thinkingLevelMap } : {}),
+				...(thinking.compat ? { compat: thinking.compat } : {}),
 				...(reported?.input ? { input: reported.input } : {}),
 			},
 			status: "default",
